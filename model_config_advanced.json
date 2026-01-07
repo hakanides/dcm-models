@@ -1,0 +1,167 @@
+
+{
+  "population": {
+    "N": 500,
+    "T": 100,
+    "seed": 123
+  },
+  "design": {
+    "path": "scenarios_prepared.csv",
+    "sample_without_replacement": true
+  },
+  "measurement": {
+    "items_path": "items_config_advanced.csv",
+    "thresholds": [-1.5, -0.5, 0.5, 1.5]
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4],
+      "probs": [0.1, 0.35, 0.3, 0.2, 0.05]
+    },
+    "edu_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5],
+      "probs": [0.02, 0.2, 0.15, 0.45, 0.15, 0.03]
+    },
+    "income_indiv_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5, 6, 7],
+      "probs": [0.2, 0.2, 0.18, 0.14, 0.1, 0.08, 0.06, 0.04]
+    },
+    "income_house_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5, 6, 7],
+      "probs": [0.1, 0.12, 0.15, 0.16, 0.15, 0.12, 0.1, 0.1]
+    },
+    "work_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5],
+      "probs": [0.45, 0.1, 0.1, 0.1, 0.2, 0.05]
+    },
+    "marital_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2],
+      "probs": [0.75, 0.22, 0.03]
+    },
+    "hh_size": {
+      "type": "categorical",
+      "values": [1, 2, 3, 4, 5],
+      "probs": [0.05, 0.2, 0.3, 0.25, 0.2]
+    },
+    "hh_earners": {
+      "type": "categorical",
+      "values": [1, 2, 3, 4, 5],
+      "probs": [0.15, 0.45, 0.25, 0.1, 0.05]
+    }
+  },
+  "latent": {
+    "names": ["pat_blind", "pat_constructive", "sec_dl", "sec_fp"],
+    "structural": {
+      "pat_blind": {
+        "intercept": 0.0,
+        "betas": {
+          "age_idx": 0.20,
+          "income_indiv_idx": -0.15
+        },
+        "sigma": 1.0,
+        "_note": "Increased betas for stronger structural effects (target R² ~0.2)"
+      },
+      "pat_constructive": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.25
+        },
+        "sigma": 1.0
+      },
+      "sec_dl": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.18,
+          "income_indiv_idx": 0.12
+        },
+        "sigma": 1.0
+      },
+      "sec_fp": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.20
+        },
+        "sigma": 1.0
+      }
+    },
+    "correlations": {
+      "pat_blind_pat_constructive": 0.4,
+      "sec_dl_sec_fp": 0.5,
+      "pat_blind_sec_dl": -0.2,
+      "pat_blind_sec_fp": -0.15,
+      "pat_constructive_sec_dl": 0.1,
+      "pat_constructive_sec_fp": 0.05
+    }
+  },
+  "random_coefficients": {
+    "_comment": "Random taste heterogeneity (Mixed Logit component)",
+    "coefficients": {
+      "b_fee10k": {
+        "distribution": "normal",
+        "mean": 0.0,
+        "std": 0.3,
+        "_note": "Heterogeneity in price sensitivity"
+      },
+      "b_dur": {
+        "distribution": "normal",
+        "mean": 0.0,
+        "std": 0.02,
+        "_note": "Heterogeneity in duration sensitivity"
+      }
+    },
+    "correlations": {
+      "b_fee10k_b_dur": 0.3,
+      "_note": "Correlation between random coefficients"
+    }
+  },
+  "choice_model": {
+    "fee_scale": 10000.0,
+    "alts": { "1": "paid1", "2": "paid2", "3": "standard" },
+    "base_terms": [
+      { "name": "ASC_paid", "apply_to": ["paid1", "paid2"], "term": "const", "coef": 0.25 },
+      { "name": "ASC_std",  "apply_to": ["standard"],       "term": "const", "coef": 0.00 }
+    ],
+    "attribute_terms": [
+      {
+        "name": "b_fee10k",
+        "apply_to": ["paid1", "paid2"],
+        "term": "fee10k",
+        "base_coef": -1.0,
+        "enforce_sign": "negative",
+        "interactions": [
+          { "with": "age_idx",          "coef": 0.06, "enforce_sign": "positive", "center": 2.0, "scale": 2.0 },
+          { "with": "edu_idx",          "coef": 0.08, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_indiv_idx", "coef": 0.12, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_house_idx", "coef": 0.06, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "pat_blind",        "coef": -0.10, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "pat_constructive", "coef": -0.04, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_dl",           "coef": 0.05,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_fp",           "coef": 0.04,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 }
+        ]
+      },
+      {
+        "name": "b_dur",
+        "apply_to": ["paid1", "paid2", "standard"],
+        "term": "dur",
+        "base_coef": -0.08,
+        "enforce_sign": "negative",
+        "interactions": [
+          { "with": "edu_idx",          "coef": -0.04, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "income_indiv_idx", "coef": -0.03, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "income_house_idx", "coef": -0.02, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "marital_idx",      "coef": -0.03, "enforce_sign": "negative", "center": 0.5, "scale": 0.5 },
+          { "with": "pat_blind",        "coef": 0.06, "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "pat_constructive", "coef": 0.04, "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_dl",           "coef": -0.05, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_fp",           "coef": -0.04, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 }
+        ]
+      }
+    ]
+  }
+}

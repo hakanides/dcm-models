@@ -1,0 +1,22 @@
+# DCM Simulation and Estimation Framework
+# ========================================
+# Install with: pip install -r requirements.txt
+
+# Core estimation library
+biogeme>=3.3.1
+
+# Data handling
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Statistical analysis
+scipy>=1.10.0
+
+# Machine learning (factor analysis, StandardScaler)
+scikit-learn>=1.2.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Testing
+pytest>=7.0.0

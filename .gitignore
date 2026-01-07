@@ -1,0 +1,50 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Biogeme iteration files
+__*.iter
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Results (regeneratable)
+results/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Biogeme output files (test runs)
+*.html
+*.yaml
+
+# Results symlinks
+hcm_improved_results
+mnl_small_results
+mxl_small_results
+
+# Misc
+=7.0.0
