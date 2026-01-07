@@ -28,7 +28,7 @@ import shutil
 from pathlib import Path
 from scipy import stats
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import warnings
 # Selective warning suppression - allow important warnings through
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -463,22 +463,126 @@ def estimate_model(database: db.Database, model_func, null_ll: float, output_dir
 # =============================================================================
 
 def likelihood_ratio_test(ll_restricted: float, ll_unrestricted: float,
-                          df: int) -> Tuple[float, float]:
+                          df: int, validate: bool = True) -> Tuple[float, float]:
     """
     Perform likelihood ratio test.
 
     H0: Restricted model is adequate
     H1: Unrestricted model is better
 
-    Returns: (LR statistic, p-value)
+    Args:
+        ll_restricted: Log-likelihood of the restricted (simpler) model
+        ll_unrestricted: Log-likelihood of the unrestricted (full) model
+        df: Degrees of freedom (difference in number of parameters)
+        validate: If True, return NaN for invalid tests
+
+    Returns:
+        Tuple of (LR statistic, p-value)
+
+    Notes:
+        - LR statistic should be non-negative for properly nested models
+        - Negative values indicate: wrong nesting order, convergence issues,
+          or models that are not truly nested
+        - Very small LR (<0.01) may indicate parameters are not identified
     """
-    lr_stat = -2 * (ll_restricted - ll_unrestricted)
-    # Guard: LR should be positive for properly nested models
-    if lr_stat < 0:
-        # Models may not be properly nested or have convergence issues
+    # Input validation
+    if df <= 0:
         return np.nan, np.nan
+
+    if np.isnan(ll_restricted) or np.isnan(ll_unrestricted):
+        return np.nan, np.nan
+
+    lr_stat = -2 * (ll_restricted - ll_unrestricted)
+
+    if validate:
+        # Guard 1: LR should be positive for properly nested models
+        if lr_stat < 0:
+            # Possible causes:
+            # 1. Models compared in wrong order (restricted/unrestricted swapped)
+            # 2. Models not truly nested
+            # 3. One or both models didn't converge properly
+            # 4. Local optimum issues
+            return np.nan, np.nan
+
+        # Guard 2: Extremely large LR may indicate numerical issues
+        if lr_stat > 10000:
+            # This could indicate one model failed to converge
+            return np.nan, np.nan
+
     p_value = 1 - stats.chi2.cdf(lr_stat, df)
     return lr_stat, p_value
+
+
+def diagnose_lr_test(ll_restricted: float, ll_unrestricted: float,
+                     k_restricted: int, k_unrestricted: int,
+                     model_restricted: str = "restricted",
+                     model_unrestricted: str = "unrestricted") -> Dict[str, Any]:
+    """
+    Diagnose potential issues with a likelihood ratio test.
+
+    Returns detailed information about why an LR test might be invalid.
+    """
+    diagnosis = {
+        'valid': True,
+        'issues': [],
+        'lr_stat': None,
+        'df': None,
+        'recommendation': None
+    }
+
+    df = k_unrestricted - k_restricted
+
+    # Check nesting
+    if df <= 0:
+        diagnosis['valid'] = False
+        diagnosis['issues'].append(
+            f"Unrestricted model has fewer/equal parameters ({k_unrestricted}) "
+            f"than restricted ({k_restricted})"
+        )
+        diagnosis['recommendation'] = "Swap restricted and unrestricted models"
+        return diagnosis
+
+    diagnosis['df'] = df
+
+    # Check LL values
+    if np.isnan(ll_restricted) or np.isnan(ll_unrestricted):
+        diagnosis['valid'] = False
+        diagnosis['issues'].append("One or both log-likelihoods are NaN")
+        diagnosis['recommendation'] = "Check model convergence"
+        return diagnosis
+
+    lr_stat = -2 * (ll_restricted - ll_unrestricted)
+    diagnosis['lr_stat'] = lr_stat
+
+    if lr_stat < 0:
+        diagnosis['valid'] = False
+        diagnosis['issues'].append(
+            f"Negative LR statistic ({lr_stat:.4f}): unrestricted model "
+            f"has worse fit than restricted"
+        )
+        diagnosis['issues'].append(
+            f"  LL({model_restricted}) = {ll_restricted:.2f}"
+        )
+        diagnosis['issues'].append(
+            f"  LL({model_unrestricted}) = {ll_unrestricted:.2f}"
+        )
+        diagnosis['recommendation'] = (
+            "Check that: (1) models are properly nested, "
+            "(2) both converged to global optimum, "
+            "(3) unrestricted model includes all restricted parameters"
+        )
+    elif lr_stat < 0.01:
+        diagnosis['issues'].append(
+            f"Very small LR statistic ({lr_stat:.4f}): additional parameters "
+            "may not be identified or have minimal effect"
+        )
+    elif lr_stat > 1000:
+        diagnosis['issues'].append(
+            f"Very large LR statistic ({lr_stat:.2f}): may indicate "
+            "convergence issues or model misspecification"
+        )
+
+    return diagnosis
 
 
 def create_comparison_table(results_list: List[ModelResults]) -> pd.DataFrame:

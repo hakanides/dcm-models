@@ -102,7 +102,7 @@ def compute_utility(cfg_choice, row, alt_name, demo, lat):
     where beta_i = base_coef + sum_j coef_j * z_j (with optional centering/scaling),
     and enforce_sign is applied to the *total* beta_i (not only to interaction parts).
     """
-    fee_scale = float(cfg_choice.get("fee_scale", 100000.0))
+    fee_scale = float(cfg_choice.get("fee_scale", 10000.0))
     U = 0.0
 
     # Alternative-specific base terms (e.g., ASCs) as before

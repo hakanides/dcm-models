@@ -1,6 +1,12 @@
 # Issue: Extreme choice imbalance (~91% alt3) causes quasi-separation and convergence failure
 
-## Summary
+## Status: RESOLVED
+
+**Resolution:** Fee scaling was standardized to 10,000 which fixed utility balance. Choice shares are now ~46%, 46%, 8% (see issue_04_fee_scaling.md). Data QA checks in `src/utils/data_qa.py` now validate choice shares and warn if any alternative exceeds 80% or falls below 2%.
+
+---
+
+## Summary (Historical)
 Generated synthetic data shows extreme choice imbalance (alt3 chosen ~91% of the time), which causes quasi-complete separation in logit estimation and prevents convergence.
 
 ## Steps to Reproduce

@@ -221,20 +221,21 @@
         "name": "b_fee_scaled",
         "apply_to": ["paid1", "paid2"],
         "term": "fee_scaled",
-        "base_coef": -0.8,
+        "base_coef": -0.008,
+        "_note_fee_coef": "Coefficient scaled for fee_scale=10000. With mean fee ~700k TL, scaled fee ~70, utility contrib = -0.008*70 = -0.56",
         "enforce_sign": "negative",
         "interactions": [
-          { "with": "age_idx",          "coef": 0.06, "enforce_sign": "positive", "center": 2.0, "scale": 2.0 },
-          { "with": "edu_idx",          "coef": 0.08, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
-          { "with": "income_indiv_idx", "coef": 0.12, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
-          { "with": "income_house_idx", "coef": 0.06, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
-    
-          { "with": "pat_blind",        "coef": -0.10, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
-          { "with": "pat_constructive", "coef": -0.04, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
-          { "with": "sec_dl",           "coef": 0.05,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
-          { "with": "sec_fp",           "coef": 0.04,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 }
-    
-          
+          { "with": "age_idx",          "coef": 0.0006, "enforce_sign": "positive", "center": 2.0, "scale": 2.0 },
+          { "with": "edu_idx",          "coef": 0.0008, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_indiv_idx", "coef": 0.0012, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_house_idx", "coef": 0.0006, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+
+          { "with": "pat_blind",        "coef": -0.0010, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "pat_constructive", "coef": -0.0004, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_dl",           "coef": 0.0005,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_fp",           "coef": 0.0004,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 }
+
+
         ]
       },
     

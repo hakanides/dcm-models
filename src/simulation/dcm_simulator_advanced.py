@@ -653,7 +653,12 @@ class Population:
 
                 beta += coef * z
 
-            # Sign enforcement on total systematic beta
+            # Sign enforcement on total systematic beta (BEFORE random term)
+            # NOTE: This ensures the MEAN is correctly signed, but individual
+            # coefficients may flip sign if random variation is large enough.
+            # This is intentional - enforcing signs AFTER adding random terms
+            # would truncate the distribution and distort heterogeneity estimates.
+            # For strictly signed coefficients, use lognormal distributions instead.
             enforce = term_spec.get('enforce_sign')
             if enforce == 'positive':
                 beta = abs(beta)

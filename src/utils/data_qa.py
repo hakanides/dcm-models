@@ -24,7 +24,7 @@ def validate_dcm_data(df: pd.DataFrame,
                       max_share_threshold: float = 0.8,
                       min_share_threshold: float = 0.05,
                       max_fee_threshold: float = 1e6,
-                      fee_scale: float = 1e6,
+                      fee_scale: float = 10000.0,
                       max_utility_contribution: float = 10.0,
                       fail_on_error: bool = False) -> Dict[str, Any]:
     """

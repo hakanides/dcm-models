@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  dcm:
+    build: .
+    image: dcm-estimation:latest
+    container_name: dcm-estimation
+    volumes:
+      # Mount data and results directories
+      - ./data:/app/data
+      - ./results:/app/results
+      # Mount config files
+      - ./model_config.json:/app/model_config.json:ro
+      - ./biogeme.toml:/app/biogeme.toml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    working_dir: /app
+
+  # Run all models
+  estimate:
+    extends: dcm
+    command: python run_all_models.py
+
+  # Run tests
+  test:
+    extends: dcm
+    command: pytest tests/ -v --tb=short
+
+  # Interactive shell
+  shell:
+    extends: dcm
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+
+  # Jupyter notebook (optional)
+  notebook:
+    extends: dcm
+    ports:
+      - "8888:8888"
+    command: >
+      pip install jupyter && jupyter notebook
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --NotebookApp.token=''

@@ -22,15 +22,21 @@ import shutil
 import os
 from pathlib import Path
 import warnings
-# Selective warning suppression - allow important warnings through
-warnings.filterwarnings('ignore', category=FutureWarning)  # Biogeme deprecation warnings
-warnings.filterwarnings('ignore', message='.*overflow.*')  # Numerical overflow in exp()
-warnings.filterwarnings('ignore', message='.*divide by zero.*')  # Division warnings
+# Warning suppression for expected Biogeme optimization warnings
+# These are normal during model estimation:
+#   - FutureWarning: Biogeme API deprecation warnings
+#   - overflow: Numerical overflow in exp() during early iterations
+#   - divide by zero: Can occur during probability calculation
+# To see all warnings for debugging, use: configure_warnings(debug_mode=True)
+# from src.utils.logging_config import configure_warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', message='.*overflow.*')
+warnings.filterwarnings('ignore', message='.*divide by zero.*')
 
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable, bioDraws, MonteCarlo, log
+from biogeme.expressions import Beta, Variable, bioDraws, MonteCarlo, log, PanelLikelihoodTrajectory
 
 
 # =============================================================================
@@ -100,10 +106,11 @@ def prepare_data(data_path: str):
     """
     df = pd.read_csv(data_path)
 
-    # Scale fees to match config (fee_scale = 10000.0)
-    df['fee1_10k'] = df['fee1'] / 10000.0
-    df['fee2_10k'] = df['fee2'] / 10000.0
-    df['fee3_10k'] = df['fee3'] / 10000.0
+    # Scale fees by 10,000 (standard across all configs and models)
+    FEE_SCALE = 10000.0
+    df['fee1_10k'] = df['fee1'] / FEE_SCALE
+    df['fee2_10k'] = df['fee2'] / FEE_SCALE
+    df['fee3_10k'] = df['fee3'] / FEE_SCALE
 
     # Center demographics - MUST match model_config.json interactions!
     # Format: (variable - center) / scale
@@ -305,6 +312,7 @@ def model_mxl_random_fee(database):
     """Mixed Logit with random fee coefficient.
 
     NOTE: σ will be ~0 if data generated without random coefficients.
+    Uses PanelLikelihoodTrajectory for panel data (same draws across choice situations).
     """
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
@@ -326,10 +334,14 @@ def model_mxl_random_fee(database):
     av = {1: 1, 2: 1, 3: 1}
 
     prob = models.logit(V, av, CHOICE)
-    return log(MonteCarlo(prob)), 'MXL-RandomFee'
+    # PanelLikelihoodTrajectory aggregates probs across choice situations per individual
+    return log(MonteCarlo(PanelLikelihoodTrajectory(prob))), 'MXL-RandomFee'
 
 def model_mxl_random_both(database):
-    """Mixed Logit with random fee and duration."""
+    """Mixed Logit with random fee and duration.
+
+    Uses PanelLikelihoodTrajectory for panel data (same draws across choice situations).
+    """
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
@@ -352,7 +364,8 @@ def model_mxl_random_both(database):
     av = {1: 1, 2: 1, 3: 1}
 
     prob = models.logit(V, av, CHOICE)
-    return log(MonteCarlo(prob)), 'MXL-RandomBoth'
+    # PanelLikelihoodTrajectory aggregates probs across choice situations per individual
+    return log(MonteCarlo(PanelLikelihoodTrajectory(prob))), 'MXL-RandomBoth'
 
 # =============================================================================
 # HCM (HYBRID CHOICE) MODELS
@@ -475,11 +488,38 @@ def get_starting_values(previous_result: dict, target_params: list = None) -> di
 # ESTIMATION AND COMPARISON
 # =============================================================================
 
-def estimate_model(database, model_func, n_draws=None, output_dir=None):
+def get_warm_start_values(previous_result, current_model_params):
+    """Extract starting values from previous model for warm-start.
+
+    Args:
+        previous_result: Result dict from a simpler model
+        current_model_params: List of parameter names in current model
+
+    Returns:
+        Dict of {param_name: starting_value} for matching parameters
+    """
+    if previous_result is None:
+        return {}
+
+    warm_start = {}
+    prev_betas = previous_result.get('betas', {})
+
+    for param in current_model_params:
+        if param in prev_betas:
+            warm_start[param] = prev_betas[param]
+
+    return warm_start
+
+
+def estimate_model(database, model_func, n_draws=None, output_dir=None, warm_start=None):
     """Estimate a model and return results.
 
-    For warm-start, use get_starting_values() to extract estimates from
-    a simpler model and pass them to your model function.
+    Args:
+        database: Biogeme database
+        model_func: Function returning (logprob, name)
+        n_draws: Number of draws for MXL models
+        output_dir: Directory for output files
+        warm_start: Dict of {param_name: starting_value} for warm-start
     """
     logprob, name = model_func(database)
 
@@ -487,6 +527,10 @@ def estimate_model(database, model_func, n_draws=None, output_dir=None):
         biogeme_obj = bio.BIOGEME(database, logprob, number_of_draws=n_draws)
     else:
         biogeme_obj = bio.BIOGEME(database, logprob)
+
+    # Apply warm-start values if provided
+    if warm_start:
+        biogeme_obj.change_init_values(warm_start)
 
     # Set model name with output directory path for HTML files
     model_name = name.replace('-', '_').replace(' ', '_')
@@ -604,24 +648,47 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
         (model_mnl_full, None),
     ]
 
+    # MXL Configuration
+    # Set PRODUCTION_MODE = True for publication-quality results (slower)
+    # Set PRODUCTION_MODE = False for development/testing (faster)
+    PRODUCTION_MODE = False  # Change to True for final runs
+
+    MXL_DRAWS = 5000 if PRODUCTION_MODE else 1000
+
     mxl_models = [
-        (model_mxl_random_fee, 5000),  # 5000 draws for stable estimation
-        (model_mxl_random_both, 5000),
+        # MXL with panel data is computationally intensive
+        # Uses 5000 draws in production mode, 1000 in dev mode
+        (model_mxl_random_fee, MXL_DRAWS),
+        (model_mxl_random_both, MXL_DRAWS),
     ]
 
     all_results = []
+    baseline_result = None  # For warm-start chain
 
-    # Run MNL models
+    # Run MNL models with warm-start chain
     print("\n" + "="*80)
     print("MNL MODELS")
     print("="*80)
 
+    previous_result = None
     for model_func, n_draws in mnl_models:
         print(f"\nEstimating {model_func.__name__}...")
         try:
-            result = estimate_model(database, model_func, n_draws, output_dir)
+            # Use warm-start from previous model if available
+            warm_start = None
+            if previous_result:
+                warm_start = get_warm_start_values(previous_result, list(previous_result['betas'].keys()))
+                if warm_start:
+                    print(f"  Using warm-start from previous model ({len(warm_start)} params)")
+
+            result = estimate_model(database, model_func, n_draws, output_dir, warm_start)
             result['rho2'] = 1 - (result['ll'] / null_ll)
             all_results.append(result)
+            previous_result = result
+
+            # Save baseline for other model families
+            if model_func == model_mnl_basic:
+                baseline_result = result
 
             # Print summary
             print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
@@ -645,12 +712,23 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
     print("Creating panel-aware database for MXL...")
     mxl_database = prepare_mxl_database(df)
 
+    previous_mxl_result = None
     for model_func, n_draws in mxl_models:
         print(f"\nEstimating {model_func.__name__} (draws={n_draws})...")
         try:
-            result = estimate_model(mxl_database, model_func, n_draws, output_dir)
+            # Use warm-start from baseline MNL or previous MXL
+            warm_start = None
+            if previous_mxl_result:
+                warm_start = get_warm_start_values(previous_mxl_result, list(previous_mxl_result['betas'].keys()))
+            elif baseline_result:
+                warm_start = get_warm_start_values(baseline_result, list(baseline_result['betas'].keys()))
+            if warm_start:
+                print(f"  Using warm-start ({len(warm_start)} params)")
+
+            result = estimate_model(mxl_database, model_func, n_draws, output_dir, warm_start)
             result['rho2'] = 1 - (result['ll'] / null_ll)
             all_results.append(result)
+            previous_mxl_result = result
 
             print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
 
@@ -673,12 +751,23 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
         (model_hcm_full, None),
     ]
 
+    previous_hcm_result = None
     for model_func, n_draws in hcm_models:
         print(f"\nEstimating {model_func.__name__}...")
         try:
-            result = estimate_model(database, model_func, n_draws, output_dir)
+            # Use warm-start from baseline MNL or previous HCM
+            warm_start = None
+            if previous_hcm_result:
+                warm_start = get_warm_start_values(previous_hcm_result, list(previous_hcm_result['betas'].keys()))
+            elif baseline_result:
+                warm_start = get_warm_start_values(baseline_result, list(baseline_result['betas'].keys()))
+            if warm_start:
+                print(f"  Using warm-start ({len(warm_start)} params)")
+
+            result = estimate_model(database, model_func, n_draws, output_dir, warm_start)
             result['rho2'] = 1 - (result['ll'] / null_ll)
             all_results.append(result)
+            previous_hcm_result = result
 
             print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
 
