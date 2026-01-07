@@ -15,24 +15,23 @@ pip install biogeme pandas numpy scipy matplotlib
 ## Step 1: Navigate to Project
 
 ```bash
-cd "/Users/hakanmulayim/Desktop/DCM draft3"
+cd "/path/to/DCM draft3"
 ```
 
 ---
 
-## Step 2: Run HCM Analysis (Recommended)
+## Step 2: Run All Models (Recommended)
 
-This runs all 15 HCM model specifications with split latent variables:
+This runs MNL, MXL, and HCM models with automatic comparison:
 
 ```bash
-python src/models/hcm_split_latents.py \
-    --data data/test_small_sample.csv \
-    --output results/hcm/my_analysis
+python scripts/run_all_models.py
 ```
 
 **Output:**
-- `results/hcm/my_analysis/model_comparison.csv` - Model fit statistics
-- `results/hcm/my_analysis/parameters.csv` - All parameter estimates
+- `results/all_models/model_comparison.csv` - Model fit statistics
+- `results/all_models/parameter_comparison.csv` - All parameter estimates
+- `output/latex/` - LaTeX tables for publication
 
 ---
 
@@ -40,11 +39,11 @@ python src/models/hcm_split_latents.py \
 
 ```bash
 # View model comparison
-cat results/hcm/my_analysis/model_comparison.csv
+cat results/all_models/model_comparison.csv
 
 # Or in Python:
 import pandas as pd
-df = pd.read_csv('results/hcm/my_analysis/model_comparison.csv')
+df = pd.read_csv('results/all_models/model_comparison.csv')
 print(df.sort_values('AIC'))
 ```
 
@@ -89,28 +88,44 @@ B_FEE_PatBlind      -0.22     -7.47    ***  <- Significant!
 
 ```bash
 # MNL Models
-python src/models/mnl_model_comparison.py --data data/test_small_sample.csv
+python src/models/mnl_model_comparison.py --data data/test_validation.csv
 
-# MXL Models (takes longer)
-python src/models/mxl_models.py --data data/test_small_sample.csv
+# MXL Models (takes longer due to simulation)
+python src/models/mxl_models.py --data data/test_validation.csv --draws 2000
 
-# Improved HCM (fewer models, faster)
-python src/models/hcm_model_improved.py --data data/test_small_sample.csv
+# HCM with split latent variables
+python src/models/hcm_split_latents.py --data data/test_validation.csv
 ```
 
 ### Generate New Data
 
 ```bash
-python src/simulation/dcm_simulator_advanced.py \
-    --n_respondents 100 \
-    --n_tasks 50 \
-    --output data/my_simulation.csv
+# Basic simulation
+python src/simulation/simulate_full_data.py \
+    --config config/model_config.json \
+    --out data/simulated/my_simulation.csv
+
+# Advanced simulation with random coefficients
+python src/simulation/simulate_full_data.py \
+    --config config/model_config_advanced.json \
+    --out data/simulated/advanced_simulation.csv \
+    --keep_latent
 ```
 
-### Compare All Models
+### Run Full Pipeline
 
 ```bash
-python src/analysis/final_comparison.py
+# Run everything with shell script
+./scripts/run_all.sh --data=data/test_validation.csv
+
+# Skip MXL (faster)
+./scripts/run_all.sh --skip-mxl
+```
+
+### Validate Estimation
+
+```bash
+python scripts/validate_estimation.py
 ```
 
 ---
@@ -133,9 +148,24 @@ The model is worse than random choice. Check:
 
 ---
 
+## Project Structure
+
+```
+config/              # Configuration files
+scripts/             # Entry point scripts (run_all_models.py)
+data/                # Data files (test_validation.csv)
+src/                 # Source code
+output/              # Generated outputs (LaTeX, logs)
+results/             # Estimation results
+tests/               # Test suite
+docs/                # Documentation
+```
+
+---
+
 ## Next Steps
 
 1. Read `README.md` for full documentation
 2. Read `docs/MODEL_SPECIFICATIONS.md` for model details
-3. Modify model specifications in `src/models/`
+3. Modify configurations in `config/`
 4. Add your own data in `data/`

@@ -68,41 +68,80 @@ numerically_safe = "True"   # Handles numerical issues
 DCM draft3/
 ├── README.md                      # This documentation
 ├── biogeme.toml                   # Biogeme configuration
+├── requirements.txt               # Python dependencies
+│
+├── config/                        # Configuration files
+│   ├── model_config.json          # Basic MNL model parameters
+│   ├── model_config_advanced.json # Advanced HCM/MXL parameters
+│   ├── items_config.csv           # Likert scale item definitions
+│   ├── items_config_advanced.csv  # Extended item definitions
+│   └── simulation_config_template.json
+│
+├── scripts/                       # Entry point scripts
+│   ├── run_all_models.py          # Main estimation runner
+│   ├── validate_estimation.py     # Validation script
+│   ├── run_all.sh                 # Shell wrapper for full pipeline
+│   └── clean.sh                   # Cleanup script
 │
 ├── data/                          # Data files
-│   ├── test_small_sample.csv      # Main analysis data (50 respondents)
-│   ├── test_simulation.csv        # Simulation output
-│   ├── test_advanced.csv          # Advanced simulation
-│   └── config/                    # Configuration files
-│       ├── items_config.csv       # Likert scale items
-│       └── items_config_advanced.csv
+│   ├── test_validation.csv        # Main test/validation data
+│   ├── simulated/                 # Generated simulation data
+│   ├── raw/                       # Raw input files (scenarios)
+│   └── processed/                 # Processed datasets
 │
 ├── src/                           # Source code
 │   ├── simulation/                # Data simulation
-│   │   ├── dcm_simulator.py       # Basic simulator
-│   │   ├── dcm_simulator_advanced.py  # Advanced with LVs
+│   │   ├── dcm_simulator.py       # Basic MNL simulator
+│   │   ├── dcm_simulator_advanced.py  # Advanced with LVs & MXL
 │   │   ├── simulate_full_data.py  # Full simulation runner
 │   │   └── prepare_scenarios.py   # Scenario preparation
 │   │
 │   ├── models/                    # Model specifications
 │   │   ├── mnl_model_comparison.py    # MNL models
-│   │   ├── mnl_model_comparison_v2.py # MNL with interactions
 │   │   ├── mxl_models.py          # Mixed Logit models
-│   │   ├── hcm_model.py           # Basic HCM
-│   │   ├── hcm_model_improved.py  # Improved HCM with CFA
+│   │   ├── hcm_model_improved.py  # HCM with CFA
 │   │   └── hcm_split_latents.py   # HCM with 4 split LVs
 │   │
 │   ├── estimation/                # Estimation utilities
 │   │   ├── robust_estimation.py   # Robust estimation module
-│   │   └── validate_estimation.py # Validation diagnostics
+│   │   └── cross_validation.py    # K-fold cross-validation
 │   │
-│   └── analysis/                  # Analysis scripts
-│       └── final_comparison.py    # Cross-model comparison
+│   ├── policy_analysis/           # Policy analysis tools
+│   │   ├── wtp.py                 # Willingness-to-Pay calculator
+│   │   ├── elasticity.py          # Elasticity calculator
+│   │   ├── marginal_effects.py    # Marginal effects
+│   │   ├── welfare.py             # Welfare analysis
+│   │   └── demand_forecasting.py  # Demand forecasting
+│   │
+│   ├── analysis/                  # Analysis scripts
+│   │   ├── final_comparison.py    # Cross-model comparison
+│   │   └── sensitivity_analysis.py # Parameter sensitivity
+│   │
+│   └── utils/                     # Utilities
+│       ├── latex_output.py        # LaTeX table generation
+│       └── data_qa.py             # Data quality checks
 │
-└── results/                       # Output results
-    ├── mnl/                       # MNL results
-    ├── mxl/                       # MXL results
-    └── hcm/                       # HCM results
+├── output/                        # Generated outputs
+│   ├── latex/                     # LaTeX tables
+│   ├── html/                      # HTML reports
+│   └── logs/                      # Log files
+│
+├── results/                       # Estimation results
+│   ├── mnl/latest/                # Current MNL results
+│   ├── mxl/latest/                # Current MXL results
+│   ├── hcm/latest/                # Current HCM results
+│   └── archive/                   # Archived experimental results
+│
+├── tests/                         # Test suite
+│   ├── test_data_preparation.py
+│   ├── test_latent_estimation.py
+│   ├── test_model_convergence.py
+│   └── test_policy_analysis.py
+│
+└── docs/                          # Documentation
+    ├── QUICK_START.md
+    ├── METHODOLOGY.md
+    └── MODEL_SPECIFICATIONS.md
 ```
 
 ---
@@ -279,49 +318,59 @@ To ensure convergence, parameters are bounded:
 
 ```bash
 # 1. Navigate to project directory
-cd "/Users/hakanmulayim/Desktop/DCM draft3"
+cd "/path/to/DCM draft3"
 
-# 2. Run HCM with split latent variables (recommended)
-python src/models/hcm_split_latents.py \
-    --data data/test_small_sample.csv \
-    --output results/hcm/latest
+# 2. Run all models (MNL, MXL, HCM) with comparison
+python scripts/run_all_models.py
 
-# 3. Run MNL comparison
-python src/models/mnl_model_comparison.py \
-    --data data/test_small_sample.csv \
-    --output results/mnl/latest
-
-# 4. Run final comparison
-python src/analysis/final_comparison.py
+# 3. Or run the full pipeline via shell script
+./scripts/run_all.sh --data=data/test_validation.csv
 ```
 
 ### Running Individual Models
 
 ```bash
 # MNL Models
-python src/models/mnl_model_comparison.py --data data/test_small_sample.csv
+python src/models/mnl_model_comparison.py --data data/test_validation.csv
 
-# MXL Models
-python src/models/mxl_models.py --data data/test_small_sample.csv
-
-# HCM Models (improved version with CFA)
-python src/models/hcm_model_improved.py --data data/test_small_sample.csv
+# MXL Models (with panel data)
+python src/models/mxl_models.py --data data/test_validation.csv --draws 2000
 
 # HCM with 4 split latent variables
-python src/models/hcm_split_latents.py --data data/test_small_sample.csv
+python src/models/hcm_split_latents.py --data data/test_validation.csv
+
+# Validation script
+python scripts/validate_estimation.py
 ```
 
 ### Generating New Simulation Data
 
 ```bash
-# Basic simulation
-python src/simulation/dcm_simulator.py --output data/new_simulation.csv
+# Full simulation with all features
+python src/simulation/simulate_full_data.py \
+    --config config/model_config.json \
+    --out data/simulated/new_simulation.csv \
+    --keep_latent
 
-# Advanced simulation with latent variables
-python src/simulation/dcm_simulator_advanced.py \
-    --n_respondents 100 \
-    --n_tasks 100 \
-    --output data/new_advanced.csv
+# Advanced simulation with latent variables and random coefficients
+python src/simulation/simulate_full_data.py \
+    --config config/model_config_advanced.json \
+    --out data/simulated/advanced_simulation.csv \
+    --keep_latent
+```
+
+### Policy Analysis
+
+```python
+from src.policy_analysis import WTPCalculator, ElasticityCalculator
+
+# Calculate willingness-to-pay
+wtp_calc = WTPCalculator(estimation_result)
+wtp = wtp_calc.compute_wtp(numerator='B_DUR', denominator='B_FEE')
+
+# Calculate elasticities
+elast_calc = ElasticityCalculator(estimation_result)
+matrix = elast_calc.elasticity_matrix(scenario, 'fee')
 ```
 
 ---
