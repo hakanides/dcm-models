@@ -828,52 +828,31 @@ def run_measurement_validation(df: pd.DataFrame, output_dir: Path = None) -> Dic
         constructs=constructs
     )
 
-    # Run full validation
-    report = validator.full_report()
-
-    # Print results
-    print("\nConstruct Reliability Metrics:")
-    print("-" * 60)
-    print(f"{'Construct':<15} {'Alpha':>10} {'CR':>10} {'AVE':>10} {'Items':>8}")
-    print("-" * 60)
-
-    for construct, metrics in report['constructs'].items():
-        alpha = metrics.get('cronbachs_alpha', 0)
-        cr = metrics.get('composite_reliability', 0)
-        ave = metrics.get('ave', 0)
-        n_items = metrics.get('n_items', 0)
-
-        # Mark below threshold
-        alpha_warn = "*" if alpha < 0.7 else " "
-        cr_warn = "*" if cr < 0.7 else " "
-        ave_warn = "*" if ave < 0.5 else " "
-
-        print(f"{construct:<15} {alpha:>9.3f}{alpha_warn} {cr:>9.3f}{cr_warn} {ave:>9.3f}{ave_warn} {n_items:>8}")
-
-    print("-" * 60)
-    print("Thresholds: Alpha > 0.70, CR > 0.70, AVE > 0.50")
-    print("* = Below threshold")
-
-    # Fornell-Larcker test
-    print("\nFornell-Larcker Discriminant Validity:")
-    print("-" * 60)
-    fl_matrix = validator.fornell_larcker_test()
-    print(fl_matrix.to_string())
-    print("\nCriterion: Diagonal (sqrt(AVE)) > all values in same row/column")
+    # Run full validation and print report
+    validation_result = validator.validate_all()
+    validator.print_report()
 
     # Generate LaTeX tables if output directory specified
     if output_dir:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        validator.to_latex(output_dir)
+        print(f"\nLaTeX tables saved to: {output_dir}")
 
-        generate_measurement_validation_latex(report, output_dir)
-        generate_discriminant_validity_latex(fl_matrix, output_dir)
-
-        # Factor loadings table
-        loadings_df = validator.factor_loadings_report()
-        generate_factor_loadings_latex(loadings_df, output_dir)
-
-        print(f"\nLaTeX tables saved to: {output_dir}/HCM/")
+    # Return in dict format for compatibility
+    report = {
+        'constructs': {
+            name: {
+                'cronbachs_alpha': m.cronbachs_alpha,
+                'composite_reliability': m.composite_reliability,
+                'ave': m.average_variance_extracted,
+                'n_items': m.n_items,
+            }
+            for name, m in validation_result.construct_metrics.items()
+        },
+        'overall_valid': validation_result.overall_valid,
+        'discriminant_valid': validation_result.discriminant_validity_passed,
+    }
 
     return report
 
