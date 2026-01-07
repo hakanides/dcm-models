@@ -1020,6 +1020,444 @@ def generate_all_policy_latex(estimation_result, scenario, config=None,
         print(f"  Warning: Could not generate sensitivity table: {e}")
 
 
+# =============================================================================
+# HCM/ICLV LATEX OUTPUT FUNCTIONS
+# =============================================================================
+
+def generate_measurement_validation_latex(validation_result: dict,
+                                          output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table for measurement model validation.
+
+    Creates table with Cronbach's alpha, CR, AVE for each construct.
+
+    Args:
+        validation_result: Dict from MeasurementValidator.full_report()
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "measurement_validation.tex"
+
+    lines = [
+        "% Measurement Model Validation",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Measurement Model Validation}",
+        "\\label{tab:measurement_validation}",
+        "\\begin{tabular}{lcccc}",
+        "\\toprule",
+        "Construct & Cronbach's $\\alpha$ & CR & AVE & Items \\\\",
+        "\\midrule",
+    ]
+
+    constructs = validation_result.get('constructs', {})
+    for construct_name, metrics in constructs.items():
+        alpha = metrics.get('cronbachs_alpha', 0)
+        cr = metrics.get('composite_reliability', 0)
+        ave = metrics.get('ave', 0)
+        n_items = metrics.get('n_items', 0)
+
+        # Mark values below threshold
+        alpha_str = f"{alpha:.3f}" if alpha >= 0.7 else f"\\textbf{{{alpha:.3f}}}$^*$"
+        cr_str = f"{cr:.3f}" if cr >= 0.7 else f"\\textbf{{{cr:.3f}}}$^*$"
+        ave_str = f"{ave:.3f}" if ave >= 0.5 else f"\\textbf{{{ave:.3f}}}$^*$"
+
+        lines.append(f"{_escape_latex(construct_name)} & {alpha_str} & {cr_str} & {ave_str} & {n_items} \\\\")
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{5}{l}{\\footnotesize Thresholds: $\\alpha > 0.70$, CR $> 0.70$, AVE $> 0.50$} \\\\",
+        "\\multicolumn{5}{l}{\\footnotesize $^*$ Below threshold} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
+def generate_factor_loadings_latex(loadings_df, output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table for factor loadings.
+
+    Args:
+        loadings_df: DataFrame with columns ['construct', 'item', 'loading', 'se', 't_stat']
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    import pandas as pd
+
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "factor_loadings.tex"
+
+    lines = [
+        "% Factor Loadings",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Factor Loadings}",
+        "\\label{tab:factor_loadings}",
+        "\\begin{tabular}{llrrr}",
+        "\\toprule",
+        "Construct & Item & Loading ($\\lambda$) & Std. Err. & t-stat \\\\",
+        "\\midrule",
+    ]
+
+    current_construct = None
+    for _, row in loadings_df.iterrows():
+        construct = row.get('construct', '')
+        item = row.get('item', '')
+        loading = row.get('loading', 0)
+        se = row.get('se', 0)
+        t_stat = row.get('t_stat', 0)
+
+        # Add separator between constructs
+        if construct != current_construct and current_construct is not None:
+            lines.append("\\midrule")
+        current_construct = construct
+
+        # Mark loadings below 0.5
+        loading_str = f"{loading:.3f}" if loading >= 0.5 else f"\\textbf{{{loading:.3f}}}$^*$"
+
+        lines.append(
+            f"{_escape_latex(construct)} & {_escape_latex(item)} & "
+            f"{loading_str} & {se:.3f} & {t_stat:.2f} \\\\"
+        )
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{5}{l}{\\footnotesize $^*$ Loading below 0.50 threshold} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
+def generate_discriminant_validity_latex(fl_matrix, output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table for Fornell-Larcker discriminant validity.
+
+    Args:
+        fl_matrix: DataFrame with sqrt(AVE) on diagonal, correlations off-diagonal
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    import numpy as np
+
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "discriminant_validity.tex"
+
+    constructs = list(fl_matrix.index)
+    n = len(constructs)
+
+    col_spec = "l" + "r" * n
+
+    lines = [
+        "% Fornell-Larcker Discriminant Validity",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Fornell-Larcker Discriminant Validity}",
+        "\\label{tab:discriminant_validity}",
+        f"\\begin{{tabular}}{{{col_spec}}}",
+        "\\toprule",
+        " & " + " & ".join([_escape_latex(c) for c in constructs]) + " \\\\",
+        "\\midrule",
+    ]
+
+    for i, row_construct in enumerate(constructs):
+        row_vals = []
+        for j, col_construct in enumerate(constructs):
+            val = fl_matrix.loc[row_construct, col_construct]
+            if i == j:
+                # Diagonal: sqrt(AVE) in bold
+                row_vals.append(f"\\textbf{{{val:.3f}}}")
+            elif i > j:
+                # Lower triangle: correlations
+                row_vals.append(f"{val:.3f}")
+            else:
+                # Upper triangle: empty
+                row_vals.append("")
+
+        lines.append(f"{_escape_latex(row_construct)} & " + " & ".join(row_vals) + " \\\\")
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{" + str(n+1) + "}{l}{\\footnotesize Diagonal: $\\sqrt{AVE}$, Off-diagonal: correlations} \\\\",
+        "\\multicolumn{" + str(n+1) + "}{l}{\\footnotesize Criterion: Diagonal $>$ all values in same row/column} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
+def generate_lr_test_matrix_latex(lr_results, output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table for LR test matrix comparing models.
+
+    Args:
+        lr_results: DataFrame with LR test results
+                   Columns: ['model', 'baseline', 'lr_stat', 'df', 'p_value', 'significant']
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    import pandas as pd
+
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "lr_test_matrix.tex"
+
+    lines = [
+        "% Likelihood Ratio Test Matrix",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Likelihood Ratio Tests vs Baseline (M0)}",
+        "\\label{tab:lr_tests}",
+        "\\begin{tabular}{lrrrrl}",
+        "\\toprule",
+        "Model & LR Stat & d.f. & p-value & $\\Delta$AIC & Sig. \\\\",
+        "\\midrule",
+    ]
+
+    for _, row in lr_results.iterrows():
+        model = row.get('model', '')
+        lr_stat = row.get('lr_stat', 0)
+        df = row.get('df', 0)
+        p_val = row.get('p_value', 1)
+        delta_aic = row.get('delta_aic', 0)
+        sig = row.get('significant', False)
+
+        sig_str = "***" if p_val < 0.001 else ("**" if p_val < 0.01 else ("*" if p_val < 0.05 else ""))
+
+        lines.append(
+            f"{_escape_latex(model)} & {lr_stat:.2f} & {df} & "
+            f"{p_val:.4f} & {delta_aic:.1f} & {sig_str} \\\\"
+        )
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{6}{l}{\\footnotesize $^{***}p<0.001$, $^{**}p<0.01$, $^{*}p<0.05$} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
+def generate_monte_carlo_latex(mc_result, output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table for Monte Carlo validation results.
+
+    Args:
+        mc_result: MonteCarloResult object or DataFrame
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    import pandas as pd
+
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "monte_carlo_results.tex"
+
+    # Convert to DataFrame if needed
+    if hasattr(mc_result, 'summary_table'):
+        df = mc_result.summary_table()
+    else:
+        df = mc_result
+
+    # Get unique sample sizes and parameters
+    sample_sizes = sorted(df['sample_size'].unique())
+    params = df['parameter'].unique()
+
+    # Build column specification
+    n_sizes = len(sample_sizes)
+    col_spec = "l" + "rrr" * n_sizes
+
+    lines = [
+        "% Monte Carlo Simulation Results",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Monte Carlo Simulation Results}",
+        "\\label{tab:monte_carlo}",
+        f"\\begin{{tabular}}{{{col_spec}}}",
+        "\\toprule",
+    ]
+
+    # Header row 1: sample sizes
+    header1 = "Parameter"
+    for n in sample_sizes:
+        header1 += f" & \\multicolumn{{3}}{{c}}{{N = {n}}}"
+    lines.append(header1 + " \\\\")
+
+    # Header row 2: metrics
+    header2 = ""
+    for _ in sample_sizes:
+        header2 += " & Bias & RMSE & Cov."
+    lines.append(header2 + " \\\\")
+    lines.append("\\midrule")
+
+    # Data rows
+    for param in params:
+        row = f"{_escape_latex(param)}"
+        for n in sample_sizes:
+            mask = (df['parameter'] == param) & (df['sample_size'] == n)
+            if mask.any():
+                bias = df.loc[mask, 'bias'].values[0]
+                rmse = df.loc[mask, 'rmse'].values[0]
+                cov = df.loc[mask, 'coverage_95'].values[0]
+
+                # Highlight poor coverage
+                cov_str = f"{cov:.2f}" if 0.90 <= cov <= 0.98 else f"\\textbf{{{cov:.2f}}}"
+
+                row += f" & {bias:.3f} & {rmse:.3f} & {cov_str}"
+            else:
+                row += " & -- & -- & --"
+        lines.append(row + " \\\\")
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{" + str(1 + 3*n_sizes) + "}{l}{\\footnotesize Coverage should be approximately 0.95} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
+def generate_iclv_comparison_latex(comparison_df, output_dir: Path = None) -> Path:
+    """
+    Generate LaTeX table comparing two-stage vs ICLV estimation.
+
+    Args:
+        comparison_df: DataFrame from compare_two_stage_vs_iclv()
+        output_dir: Base output directory
+
+    Returns:
+        Path to generated LaTeX file
+    """
+    if output_dir is None:
+        output_dir = Path("output/latex")
+
+    hcm_dir = output_dir / "HCM"
+    hcm_dir.mkdir(parents=True, exist_ok=True)
+    output_path = hcm_dir / "iclv_vs_twostage.tex"
+
+    lines = [
+        "% Two-Stage vs ICLV Estimation Comparison",
+        "% Generated automatically - fragment for \\input{}",
+        "",
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Two-Stage vs ICLV Estimation: Bias Comparison}",
+        "\\label{tab:iclv_comparison}",
+        "\\begin{tabular}{llrrr}",
+        "\\toprule",
+        "Parameter & Method & Estimate & Bias & Bias (\\%) \\\\",
+        "\\midrule",
+    ]
+
+    for _, row in comparison_df.iterrows():
+        param = row.get('parameter', '')
+        method = row.get('method', '')
+        true_val = row.get('true_value', 0)
+
+        if method == 'two_stage':
+            est = row.get('two_stage', 0)
+            bias = row.get('two_stage_bias', 0) * true_val if true_val != 0 else 0
+            bias_pct = row.get('two_stage_bias', 0) * 100
+        else:
+            est = row.get('iclv', 0)
+            bias = row.get('iclv_bias', 0) * true_val if true_val != 0 else 0
+            bias_pct = row.get('iclv_bias', 0) * 100
+
+        # Format method name
+        method_str = "Two-stage" if method == 'two_stage' else "ICLV"
+
+        lines.append(
+            f"{_escape_latex(param)} & {method_str} & {est:.3f} & "
+            f"{bias:+.3f} & {bias_pct:+.1f}\\% \\\\"
+        )
+
+        # Add separator after ICLV row
+        if method == 'iclv':
+            lines.append("\\midrule")
+
+    # Remove last midrule if present
+    if lines[-1] == "\\midrule":
+        lines.pop()
+
+    lines.extend([
+        "\\bottomrule",
+        "\\multicolumn{5}{l}{\\footnotesize ICLV corrects for attenuation bias in LV effects} \\\\",
+        "\\end{tabular}",
+        "\\end{table}",
+    ])
+
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(lines))
+
+    print(f"  LaTeX output: {output_path}")
+    return output_path
+
+
 if __name__ == '__main__':
     print("LaTeX Output Module")
     print("=" * 40)
@@ -1028,6 +1466,13 @@ if __name__ == '__main__':
     print("  cleanup_latex_output()")
     print("  generate_all_simulation_latex(df)")
     print("  generate_all_policy_latex(result, scenario)")
+    print("\nHCM/ICLV Functions:")
+    print("  generate_measurement_validation_latex(result)")
+    print("  generate_factor_loadings_latex(loadings_df)")
+    print("  generate_discriminant_validity_latex(fl_matrix)")
+    print("  generate_lr_test_matrix_latex(lr_results)")
+    print("  generate_monte_carlo_latex(mc_result)")
+    print("  generate_iclv_comparison_latex(comparison_df)")
     print("\nUsage:")
     print("  from src.utils.latex_output import generate_latex_output")
     print("  generate_latex_output(biogeme_results, 'MNL-Basic')")
