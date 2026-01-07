@@ -1,0 +1,74 @@
+{
+    "description": "Template config for DCM simulation with balanced choice shares",
+    "notes": [
+        "Adjust base_coef values to balance choice shares",
+        "If alt3 dominates (>80%), reduce fee coefficient magnitude or add ASC to paid options",
+        "Target ~30-40% share per alternative for good estimation"
+    ],
+    "population": {
+        "n_agents": 50,
+        "seed": 42
+    },
+    "design": {
+        "path": "data/scenarios.csv",
+        "sample_without_replacement": true
+    },
+    "demographics": {
+        "age_idx": {"distribution": "discrete_uniform", "min": 1, "max": 5},
+        "edu_idx": {"distribution": "discrete_uniform", "min": 1, "max": 5},
+        "income_indiv_idx": {"distribution": "discrete_uniform", "min": 1, "max": 5},
+        "income_house_idx": {"distribution": "discrete_uniform", "min": 1, "max": 5},
+        "marital_idx": {"distribution": "bernoulli", "p": 0.5}
+    },
+    "latent": {
+        "constructs": {
+            "pat_blind": {
+                "mean": 0, "std": 1,
+                "indicators": ["pat_blind_1", "pat_blind_2", "pat_blind_3", "pat_blind_4", "pat_blind_5"]
+            },
+            "pat_constructive": {
+                "mean": 0, "std": 1,
+                "indicators": ["pat_constructive_1", "pat_constructive_2", "pat_constructive_3", "pat_constructive_4", "pat_constructive_5"]
+            },
+            "sec_dl": {
+                "mean": 0, "std": 1,
+                "indicators": ["sec_dl_1", "sec_dl_2", "sec_dl_3", "sec_dl_4", "sec_dl_5"]
+            },
+            "sec_fp": {
+                "mean": 0, "std": 1,
+                "indicators": ["sec_fp_1", "sec_fp_2", "sec_fp_3", "sec_fp_4", "sec_fp_5"]
+            }
+        }
+    },
+    "choice_model": {
+        "alternatives": {
+            "1": "paid_partial_1",
+            "2": "paid_partial_2",
+            "3": "standard_free"
+        },
+        "asc": {
+            "1": 2.0,
+            "2": 2.0,
+            "3": 0.0
+        },
+        "attribute_terms": [
+            {
+                "name": "b_fee10k",
+                "attribute": "fee10k",
+                "base_coef": -0.3,
+                "comment": "REDUCED from -1.0 to -0.3 to balance choice shares",
+                "interactions": [
+                    {"covariate": "pat_blind", "coef": -0.1},
+                    {"covariate": "sec_dl", "coef": 0.05}
+                ]
+            },
+            {
+                "name": "b_dur",
+                "attribute": "dur",
+                "base_coef": -0.08,
+                "interactions": []
+            }
+        ],
+        "fee_scale": 10000.0
+    }
+}

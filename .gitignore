@@ -32,6 +32,14 @@ Thumbs.db
 # Results (regeneratable)
 results/
 
+# Output (regeneratable)
+output/html/
+output/logs/
+*.log
+
+# Backup files
+*~*
+
 # Pytest
 .pytest_cache/
 .coverage
@@ -41,10 +49,6 @@ htmlcov/
 *.html
 *.yaml
 
-# Results symlinks
-hcm_improved_results
-mnl_small_results
-mxl_small_results
-
-# Misc
-=7.0.0
+# Large data files (track only small test data)
+data/simulated/*.csv
+data/processed/*.csv

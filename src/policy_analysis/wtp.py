@@ -125,11 +125,21 @@ class WTPCalculator:
     def compute_wtp(self,
                     numerator_param: str = None,
                     denominator_param: str = None,
-                    scale_factor: float = None) -> WTPResult:
+                    scale_factor: float = None,
+                    for_improvement: bool = True) -> WTPResult:
         """
         Compute WTP using delta method for standard errors.
 
-        WTP = -β_num / β_denom * scale
+        Standard formula: WTP = -β_num / β_denom * scale
+
+        This gives WTP for a one-unit INCREASE in the attribute.
+        For "bad" attributes (negative β, like duration where more is worse),
+        this produces negative WTP (people wouldn't pay for more duration).
+
+        When for_improvement=True (default), the sign is adjusted so that
+        WTP is POSITIVE for beneficial changes:
+        - For bad attributes (β < 0): WTP for REDUCTION (e.g., days saved)
+        - For good attributes (β > 0): WTP for INCREASE
 
         The delta method computes variance as:
         Var(WTP) = g' * Cov(β) * g
@@ -141,6 +151,9 @@ class WTPCalculator:
             numerator_param: Parameter for attribute (default: B_DUR)
             denominator_param: Cost parameter (default: B_FEE)
             scale_factor: Scale to apply (default: fee_scale from config)
+            for_improvement: If True (default), returns WTP for attribute
+                           improvement (positive WTP for beneficial changes).
+                           If False, returns raw MRS formula result.
 
         Returns:
             WTPResult with point estimate and confidence interval
@@ -156,10 +169,16 @@ class WTPCalculator:
         if beta_denom == 0:
             raise ValueError(f"Denominator parameter {denom_param} is zero")
 
-        # Point estimate: WTP = -β_num / β_denom * scale
+        # Base formula: WTP = -β_num / β_denom * scale
+        # This is WTP for a one-unit INCREASE in the attribute
         wtp = -beta_num / beta_denom * scale
 
-        # Gradient for delta method
+        # For "bad" attributes (negative β), flip sign to get WTP for improvement
+        # E.g., B_DUR < 0 means more duration is bad, so WTP for reduction is -wtp
+        if for_improvement and beta_num < 0:
+            wtp = -wtp
+
+        # Gradient for delta method (before sign adjustment)
         # g = [∂WTP/∂β_num, ∂WTP/∂β_denom]
         grad = np.array([
             -scale / beta_denom,                    # ∂WTP/∂β_num
@@ -170,7 +189,7 @@ class WTPCalculator:
         params = [num_param, denom_param]
         cov = self.result.get_covariance(params)
 
-        # Standard error via delta method
+        # Standard error via delta method (SE is always positive)
         se = delta_method_se(wtp, grad, cov)
 
         # Confidence interval
@@ -189,11 +208,130 @@ class WTPCalculator:
             scale_factor=scale
         )
 
+    def compute_wtp_fieller(self,
+                            numerator_param: str = None,
+                            denominator_param: str = None,
+                            scale_factor: float = None,
+                            for_improvement: bool = True) -> WTPResult:
+        """
+        Compute WTP using Fieller's method for ratio confidence intervals.
+
+        ISSUE #18 FIX: Normal approximation (delta method) is inappropriate for
+        ratio estimators like WTP because the ratio of two normals follows a
+        Cauchy-like distribution with heavy tails.
+
+        Fieller's method provides exact confidence intervals by solving:
+            (β_num - θ*β_denom)² = t²_α * Var(β_num - θ*β_denom)
+
+        This yields a quadratic in θ with two solutions giving CI bounds.
+
+        Advantages over delta method:
+        - Handles cases where denominator is near zero
+        - Provides asymmetric intervals reflecting true ratio distribution
+        - Can detect unbounded CIs (when denominator is insignificant)
+
+        Args:
+            numerator_param: Parameter for attribute
+            denominator_param: Cost parameter
+            scale_factor: Scale to apply
+            for_improvement: If True, adjust sign for beneficial changes
+
+        Returns:
+            WTPResult with Fieller confidence interval
+        """
+        num_param = numerator_param or self.config.dur_param
+        denom_param = denominator_param or self.config.fee_param
+        scale = scale_factor if scale_factor is not None else self.config.fee_scale
+
+        # Get coefficients and standard errors
+        beta_num = self.result.betas.get(num_param, 0)
+        beta_denom = self.result.betas.get(denom_param, 0)
+        se_num = self.result.std_errs.get(num_param, 0)
+        se_denom = self.result.std_errs.get(denom_param, 0)
+
+        if beta_denom == 0:
+            raise ValueError(f"Denominator parameter {denom_param} is zero")
+
+        # Get covariance
+        params = [num_param, denom_param]
+        cov_matrix = self.result.get_covariance(params)
+        cov_num_denom = cov_matrix[0, 1] if cov_matrix.size > 1 else 0
+
+        # Point estimate
+        wtp_raw = -beta_num / beta_denom * scale
+
+        # Fieller's method: solve quadratic for θ where
+        # (β_num - θ*β_denom)² = t² * (σ²_num - 2θ*σ_num_denom + θ²*σ²_denom)
+        # Rearrange: (β²_denom - t²*σ²_denom)*θ² - 2*(β_num*β_denom - t²*σ_num_denom)*θ
+        #            + (β²_num - t²*σ²_num) = 0
+
+        t_crit = self.config.z_score  # Using z for large samples
+        var_num = se_num ** 2
+        var_denom = se_denom ** 2
+
+        # Quadratic coefficients: a*θ² + b*θ + c = 0
+        a = beta_denom**2 - t_crit**2 * var_denom
+        b = -2 * (beta_num * beta_denom - t_crit**2 * cov_num_denom)
+        c = beta_num**2 - t_crit**2 * var_num
+
+        # Check if denominator is significantly different from zero
+        # If a ≤ 0, the CI is unbounded
+        discriminant = b**2 - 4*a*c
+
+        if a <= 0:
+            # Denominator not significantly different from zero
+            # CI is unbounded - fall back to delta method with warning
+            print(f"  ⚠️  Fieller: denominator coefficient not significantly different from zero")
+            print(f"     CI may be unbounded. Using delta method instead.")
+            return self.compute_wtp(num_param, denom_param, scale_factor, for_improvement)
+
+        if discriminant < 0:
+            # No real solutions - use delta method
+            return self.compute_wtp(num_param, denom_param, scale_factor, for_improvement)
+
+        # Solve quadratic
+        sqrt_disc = np.sqrt(discriminant)
+        theta_lower = (-b - sqrt_disc) / (2 * a)
+        theta_upper = (-b + sqrt_disc) / (2 * a)
+
+        # Apply scale (the quadratic was for unscaled β_num/β_denom)
+        # Actually, we need to redo with scaled version
+        # WTP = -β_num/β_denom * scale, so θ = -β_num/β_denom
+        # CI bounds are for θ, multiply by -scale to get WTP
+
+        ci_lower = -theta_upper * scale  # Note: signs flip due to negative
+        ci_upper = -theta_lower * scale
+
+        # Ensure lower < upper
+        if ci_lower > ci_upper:
+            ci_lower, ci_upper = ci_upper, ci_lower
+
+        wtp = wtp_raw
+        if for_improvement and beta_num < 0:
+            wtp = -wtp
+            # Also flip CI
+            ci_lower, ci_upper = -ci_upper, -ci_lower
+
+        # Approximate SE from CI width
+        se = (ci_upper - ci_lower) / (2 * self.config.z_score)
+
+        return WTPResult(
+            wtp_point=wtp,
+            wtp_se=se,
+            ci_lower=ci_lower,
+            ci_upper=ci_upper,
+            numerator_param=num_param,
+            denominator_param=denom_param,
+            method='fieller',
+            scale_factor=scale
+        )
+
     def compute_wtp_krinsky_robb(self,
                                   numerator_param: str = None,
                                   denominator_param: str = None,
                                   scale_factor: float = None,
-                                  n_draws: int = None) -> WTPResult:
+                                  n_draws: int = None,
+                                  for_improvement: bool = True) -> WTPResult:
         """
         Compute WTP using Krinsky-Robb simulation method.
 
@@ -210,6 +348,8 @@ class WTPCalculator:
             denominator_param: Cost parameter
             scale_factor: Scale to apply
             n_draws: Number of simulation draws
+            for_improvement: If True (default), returns WTP for attribute
+                           improvement (positive WTP for beneficial changes).
 
         Returns:
             WTPResult with simulation-based confidence interval
@@ -239,6 +379,11 @@ class WTPCalculator:
 
         if len(wtp_draws) == 0:
             raise ValueError("All simulation draws resulted in invalid WTP")
+
+        # For "bad" attributes (mean β < 0), flip sign for improvement WTP
+        beta_num_mean = self.result.betas.get(num_param, 0)
+        if for_improvement and beta_num_mean < 0:
+            wtp_draws = -wtp_draws
 
         # Statistics from empirical distribution
         wtp_point = np.mean(wtp_draws)
@@ -474,7 +619,8 @@ def compute_wtp_quick(betas: Dict[str, float],
                       std_errs: Dict[str, float] = None,
                       numerator: str = 'B_DUR',
                       denominator: str = 'B_FEE',
-                      scale: float = 10000.0) -> float:
+                      scale: float = 10000.0,
+                      for_improvement: bool = True) -> float:
     """
     Quick WTP calculation without full result object.
 
@@ -484,6 +630,8 @@ def compute_wtp_quick(betas: Dict[str, float],
         numerator: Numerator parameter name
         denominator: Denominator parameter name
         scale: Scale factor
+        for_improvement: If True (default), returns positive WTP for
+                        beneficial changes (reduction for bad attributes)
 
     Returns:
         WTP point estimate
@@ -494,7 +642,13 @@ def compute_wtp_quick(betas: Dict[str, float],
     if beta_denom == 0:
         return np.nan
 
-    return -beta_num / beta_denom * scale
+    wtp = -beta_num / beta_denom * scale
+
+    # For "bad" attributes (negative β), flip sign for improvement WTP
+    if for_improvement and beta_num < 0:
+        wtp = -wtp
+
+    return wtp
 
 
 if __name__ == '__main__':
@@ -508,9 +662,17 @@ if __name__ == '__main__':
     )
 
     calc = WTPCalculator(result)
-    wtp = calc.compute_wtp('B_DUR')
 
-    print(f"\nExample Calculation:")
+    # Default: WTP for improvement (positive for duration reduction)
+    wtp = calc.compute_wtp('B_DUR')
+    print(f"\nExample Calculation (for_improvement=True, default):")
     print(f"  B_FEE = -0.5, B_DUR = -0.08")
-    print(f"  WTP = -(-0.08) / (-0.5) * 10000 = {wtp.wtp_point:,.0f}")
+    print(f"  Since B_DUR < 0, duration reduction is desirable")
+    print(f"  WTP per day saved = {wtp.wtp_point:,.0f} TL (positive)")
+
+    # Raw MRS (WTP for duration INCREASE - would be negative)
+    wtp_raw = calc.compute_wtp('B_DUR', for_improvement=False)
+    print(f"\nRaw MRS (for_improvement=False):")
+    print(f"  WTP per day added = {wtp_raw.wtp_point:,.0f} TL (negative - people don't want more days)")
+
     calc.print_summary(wtp)

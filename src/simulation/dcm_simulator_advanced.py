@@ -213,7 +213,19 @@ class MeasurementModel:
     def __init__(self, config: Dict, rng: np.random.Generator):
         self.config = config.get('measurement', {})
         self.rng = rng
-        self.thresholds = tuple(self.config.get('thresholds', [-1.5, -0.5, 0.5, 1.5]))
+
+        # ISSUE #20 FIX: Improved default thresholds for better response distribution
+        # Old thresholds [-1.5, -0.5, 0.5, 1.5] with LV~N(0,1) give:
+        #   P(y=1) = 7%, P(y=5) = 7% - extremes are rare, weak LV signal
+        # New thresholds [-1.0, -0.35, 0.35, 1.0] give more balanced:
+        #   P(y=1) ≈ 16%, P(y=5) ≈ 16% - stronger signal for LV estimation
+        # These can be overridden in config via 'measurement.thresholds'
+        default_thresholds = [-1.0, -0.35, 0.35, 1.0]
+        self.thresholds = tuple(self.config.get('thresholds', default_thresholds))
+
+        # ISSUE #22 FIX: Configurable Likert scale for reverse coding
+        # Default is 5-point scale, but can be changed via config
+        self.likert_scale = int(self.config.get('likert_scale', 5))
 
         # Load items configuration
         items_path = self.config.get('items_path')
@@ -262,9 +274,10 @@ class MeasurementModel:
                 y_star = loading * lv_value + self.rng.standard_normal()
                 response = self._ordinal_from_continuous(y_star)
 
-                # Reverse coding if needed
+                # ISSUE #22 FIX: Configurable reverse coding
+                # Uses self.likert_scale (default 5) instead of hardcoded 6
                 if int(item.get('reverse', 0)) == 1:
-                    response = 6 - response
+                    response = (self.likert_scale + 1) - response
 
                 ordinal[item_name] = response
 
@@ -597,14 +610,84 @@ class Population:
         )
 
     def _draw_demographics(self) -> Dict[str, int]:
-        """Draw demographics from population distributions."""
+        """Draw demographics from population distributions.
+
+        ISSUE #21 FIX: Now supports demographic correlations.
+
+        Correlations can be specified in config under 'demographic_correlations':
+        {
+            "age_idx_income_indiv_idx": 0.3,  # Older people tend to earn more
+            "edu_idx_income_indiv_idx": 0.4,  # Education correlates with income
+        }
+
+        Implementation uses a Gaussian copula approach:
+        1. Draw correlated normal random variables
+        2. Transform to uniform via CDF
+        3. Map to discrete categories via inverse CDF
+        """
         demographics = {}
-        for var_name, spec in self.config['demographics'].items():
+        var_names = list(self.config['demographics'].keys())
+        n_vars = len(var_names)
+
+        # Check for correlation specification
+        corr_spec = self.config.get('demographic_correlations', {})
+
+        if not corr_spec or n_vars <= 1:
+            # No correlations - use independent draws (original behavior)
+            for var_name, spec in self.config['demographics'].items():
+                if spec['type'] == 'categorical':
+                    values = np.array(spec['values'])
+                    probs = np.array(spec['probs'], dtype=float)
+                    probs = probs / probs.sum()
+                    demographics[var_name] = int(self.rng.choice(values, p=probs))
+            return demographics
+
+        # Build correlation matrix for Gaussian copula
+        corr_matrix = np.eye(n_vars)
+        for i, name_i in enumerate(var_names):
+            for j, name_j in enumerate(var_names):
+                if i < j:
+                    key = f"{name_i}_{name_j}"
+                    alt_key = f"{name_j}_{name_i}"
+                    rho = corr_spec.get(key, corr_spec.get(alt_key, 0.0))
+                    corr_matrix[i, j] = rho
+                    corr_matrix[j, i] = rho
+
+        # Cholesky decomposition for correlated draws
+        try:
+            chol = np.linalg.cholesky(corr_matrix)
+        except np.linalg.LinAlgError:
+            # Correlation matrix not positive definite - fall back to independent
+            print("Warning: Demographic correlation matrix not positive definite, using independent draws")
+            for var_name, spec in self.config['demographics'].items():
+                if spec['type'] == 'categorical':
+                    values = np.array(spec['values'])
+                    probs = np.array(spec['probs'], dtype=float)
+                    probs = probs / probs.sum()
+                    demographics[var_name] = int(self.rng.choice(values, p=probs))
+            return demographics
+
+        # Draw correlated standard normals
+        z = self.rng.standard_normal(n_vars)
+        correlated_z = chol @ z
+
+        # Transform to uniforms and then to categories
+        uniforms = stats.norm.cdf(correlated_z)
+
+        for idx, var_name in enumerate(var_names):
+            spec = self.config['demographics'][var_name]
             if spec['type'] == 'categorical':
                 values = np.array(spec['values'])
                 probs = np.array(spec['probs'], dtype=float)
                 probs = probs / probs.sum()
-                demographics[var_name] = int(self.rng.choice(values, p=probs))
+
+                # Inverse CDF: find category based on uniform value
+                u = uniforms[idx]
+                cumprob = np.cumsum(probs)
+                category_idx = np.searchsorted(cumprob, u)
+                category_idx = min(category_idx, len(values) - 1)
+                demographics[var_name] = int(values[category_idx])
+
         return demographics
 
     def _compute_systematic_betas(

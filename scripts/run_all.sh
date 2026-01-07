@@ -80,7 +80,7 @@ if [ "$REGENERATE" = true ]; then
     echo "============================================================"
 
     python src/simulation/simulate_full_data.py \
-        --config model_config.json \
+        --config config/model_config.json \
         --out "$DATA_FILE" \
         --keep_latent
 fi

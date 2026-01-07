@@ -130,8 +130,19 @@ class TestWTPCalculator:
         calc = WTPCalculator(sample_result)
         wtp = calc.compute_wtp('B_DUR')
 
-        # WTP = -B_DUR / B_FEE * scale
-        # = -(-0.08) / (-0.5) * 10000 = -1600
+        # With for_improvement=True (default), WTP for "bad" attributes (β < 0)
+        # is flipped to give WTP for REDUCTION (improvement).
+        # B_DUR = -0.08 (negative = more duration is bad)
+        # WTP for duration REDUCTION (saving days) = +1600 (positive)
+        assert np.isclose(wtp.wtp_point, 1600)
+
+    def test_wtp_raw_mrs(self, sample_result):
+        """Test raw MRS formula (for_improvement=False)."""
+        calc = WTPCalculator(sample_result)
+        wtp = calc.compute_wtp('B_DUR', for_improvement=False)
+
+        # Raw MRS: WTP = -B_DUR / B_FEE * scale
+        # = -(-0.08) / (-0.5) * 10000 = -1600 (negative = wouldn't pay for MORE days)
         assert np.isclose(wtp.wtp_point, -1600)
 
     def test_wtp_has_confidence_interval(self, sample_result):
@@ -143,15 +154,20 @@ class TestWTPCalculator:
     def test_wtp_quick(self):
         """Test quick WTP function."""
         betas = {'B_FEE': -0.5, 'B_DUR': -0.08}
+        # Default for_improvement=True gives positive WTP for duration reduction
         wtp = compute_wtp_quick(betas)
-        assert np.isclose(wtp, -1600)
+        assert np.isclose(wtp, 1600)
+
+        # Raw MRS with for_improvement=False
+        wtp_raw = compute_wtp_quick(betas, for_improvement=False)
+        assert np.isclose(wtp_raw, -1600)
 
     def test_wtp_krinsky_robb(self, sample_result):
         """Test Krinsky-Robb WTP."""
         calc = WTPCalculator(sample_result)
         wtp = calc.compute_wtp_krinsky_robb('B_DUR', n_draws=100)
-        # Should be close to delta method
-        assert abs(wtp.wtp_point - (-1600)) < 500  # Allow some simulation error
+        # With for_improvement=True (default), should be close to +1600
+        assert abs(wtp.wtp_point - 1600) < 500  # Allow some simulation error
 
 
 class TestElasticityCalculator:

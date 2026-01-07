@@ -16,6 +16,11 @@ Logsum Formula:
 Where λ is the marginal utility of income (cost coefficient).
 For our model: λ = -B_FEE * scale (note: B_FEE is negative)
 
+UNCERTAINTY IN λ:
+Standard errors for CS and CV are computed via Krinsky-Robb simulation,
+which draws B_FEE (and other parameters) from their estimated distribution.
+This PROPERLY propagates uncertainty in λ through the welfare calculations.
+
 Welfare Change (CV):
     CV = CS_policy - CS_baseline
 

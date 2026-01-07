@@ -361,8 +361,16 @@ class ElasticityCalculator:
         For own-price: η = β * x * (1 - P)
         For cross-price: η = -β * x * P
 
-        The gradient depends on how P varies with parameters.
-        Simplified approach: treat P as fixed (conditional SE).
+        Full gradient includes how P varies with β:
+        For logit, ∂P_j/∂β = P_j * (1 - P_j) * x_j
+
+        Own-price: ∂η/∂β = x*(1-P) + β*x*(-∂P/∂β)
+                        = x*(1-P) - β*x*P*(1-P)*x
+                        = x*(1-P)*(1 - β*x*P)
+
+        Cross-price: ∂η/∂β = -x*P + (-β)*x*∂P/∂β
+                          = -x*P - β*x*P*(1-P)*x
+                          = -x*P*(1 + β*x*(1-P))
         """
         beta = self.result.betas.get(coefficient_param, 0)
         se_beta = self.result.std_errs.get(coefficient_param, 0)
@@ -372,15 +380,17 @@ class ElasticityCalculator:
             x = x / self.config.fee_scale
 
         probs = self._compute_probabilities(scenario)
+        p_j = probs[alt_j]
+        p_k = probs[alt_k]
 
         if elasticity_type == 'own':
             # η = β * x * (1 - P)
-            # ∂η/∂β ≈ x * (1 - P)  (treating P as approximately constant)
-            grad_beta = x * (1 - probs[alt_j])
+            # Full gradient: ∂η/∂β = x * (1 - P) * (1 - β * x * P)
+            grad_beta = x * (1 - p_j) * (1 - beta * x * p_j)
         else:
-            # η = -β * x * P
-            # ∂η/∂β ≈ -x * P
-            grad_beta = -x * probs[alt_k]
+            # η = -β * x * P_k
+            # Full gradient: ∂η/∂β = -x * P_k * (1 + β * x * (1 - P_k))
+            grad_beta = -x * p_k * (1 + beta * x * (1 - p_k))
 
         return abs(grad_beta) * se_beta
 

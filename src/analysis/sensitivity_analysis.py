@@ -8,7 +8,7 @@ recovery rates across multiple simulation replications.
 Usage:
     from src.analysis.sensitivity_analysis import SensitivityAnalyzer
 
-    analyzer = SensitivityAnalyzer(base_config='model_config.json')
+    analyzer = SensitivityAnalyzer(base_config='config/model_config.json')
     results = analyzer.run_sensitivity(
         param_name='B_FEE',
         variations=[-0.5, -0.3, -0.1],
@@ -54,7 +54,7 @@ class SensitivityAnalyzer:
     - Convergence rate: Proportion of successful estimations
     """
 
-    def __init__(self, base_config: str = 'model_config.json'):
+    def __init__(self, base_config: str = 'config/model_config.json'):
         """
         Initialize analyzer with base configuration.
 
