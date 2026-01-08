@@ -57,6 +57,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
 import warnings
+import time
+import sys
 # Selective warning suppression - allow important warnings through
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', message='.*overflow.*')
@@ -69,13 +71,27 @@ from biogeme.expressions import Beta, Variable
 
 # Import robust estimation utilities
 try:
-    from robust_estimation import (
+    from src.estimation.robust_estimation import (
         DataValidator, check_identification, validate_results,
         print_estimation_summary
     )
     ROBUST_AVAILABLE = True
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     ROBUST_AVAILABLE = False
+    # Silently fail - robust estimation is optional
+
+# Import convergence management
+try:
+    from src.estimation.convergence_diagnostics import (
+        ConvergenceChecker, ConvergenceDiagnostics,
+        generate_convergence_table, generate_convergence_latex
+    )
+    from src.estimation.robust_estimation import (
+        ConvergenceManager, StartingValueGenerator, SequentialEstimator
+    )
+    CONVERGENCE_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    CONVERGENCE_MANAGEMENT_AVAILABLE = False
 
 # Import publication-ready analysis modules
 try:
@@ -97,6 +113,134 @@ try:
     ICLV_AVAILABLE = True
 except ImportError:
     ICLV_AVAILABLE = False
+
+
+# =============================================================================
+# PROGRESS TRACKING
+# =============================================================================
+
+class ProgressTracker:
+    """
+    Track estimation progress with ETA display.
+
+    Provides real-time progress updates during HCM model estimation,
+    including elapsed time and estimated time remaining.
+
+    Example:
+        >>> tracker = ProgressTracker(total_models=15)
+        >>> for model in models:
+        ...     start = time.time()
+        ...     result = estimate(model)
+        ...     tracker.update(result.name, time.time() - start)
+        >>> tracker.finish()
+    """
+
+    def __init__(self, total_models: int, bar_width: int = 30):
+        """
+        Initialize progress tracker.
+
+        Args:
+            total_models: Total number of models to estimate
+            bar_width: Width of progress bar in characters
+        """
+        self.total = total_models
+        self.completed = 0
+        self.start_time = time.time()
+        self.model_times = []
+        self.bar_width = bar_width
+        self.current_model = ""
+
+    def start_model(self, model_name: str):
+        """Mark the start of a new model estimation."""
+        self.current_model = model_name
+        self._display_progress(estimating=True)
+
+    def update(self, model_name: str, elapsed: float, result=None):
+        """
+        Update progress after completing a model.
+
+        Args:
+            model_name: Name of completed model
+            elapsed: Time taken for this model (seconds)
+            result: Optional ModelResult for summary display
+        """
+        self.completed += 1
+        self.model_times.append(elapsed)
+        self._display_completion(model_name, elapsed, result)
+
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds as human-readable string."""
+        if seconds < 60:
+            return f"{seconds:.0f}s"
+        elif seconds < 3600:
+            mins = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{mins}m {secs}s"
+        else:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m"
+
+    def _make_bar(self, pct: float) -> str:
+        """Create progress bar string."""
+        filled = int(self.bar_width * pct / 100)
+        empty = self.bar_width - filled
+        return f"[{'█' * filled}{'░' * empty}]"
+
+    def _display_progress(self, estimating: bool = False):
+        """Display current progress."""
+        pct = self.completed / self.total * 100
+        elapsed = time.time() - self.start_time
+
+        if self.model_times:
+            avg_time = np.mean(self.model_times)
+            remaining = (self.total - self.completed) * avg_time
+            eta_str = f"ETA: {self._format_time(remaining)}"
+        else:
+            eta_str = "ETA: calculating..."
+
+        bar = self._make_bar(pct)
+        status = "Estimating" if estimating else "Completed"
+
+        line = f"\r{bar} {pct:5.1f}% | {status}: {self.current_model:<30} | Elapsed: {self._format_time(elapsed)} | {eta_str}"
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    def _display_completion(self, model_name: str, elapsed: float, result=None):
+        """Display completion message for a model."""
+        # Clear the progress line
+        sys.stdout.write("\r" + " " * 120 + "\r")
+
+        # Print completion message
+        if result:
+            print(f"  ✓ {model_name} ({elapsed:.1f}s) - LL: {result.ll:.2f}, AIC: {result.aic:.2f}")
+        else:
+            print(f"  ✓ {model_name} ({elapsed:.1f}s)")
+
+        # Show updated progress
+        self._display_progress()
+
+    def finish(self):
+        """Display final summary."""
+        total_time = time.time() - self.start_time
+        avg_time = np.mean(self.model_times) if self.model_times else 0
+
+        # Clear progress line
+        sys.stdout.write("\r" + " " * 120 + "\r")
+        print()
+
+        print("\n" + "=" * 70)
+        print("ESTIMATION COMPLETE")
+        print("=" * 70)
+        print(f"Total time: {self._format_time(total_time)}")
+        print(f"Average per model: {self._format_time(avg_time)}")
+        print(f"Models estimated: {self.completed}/{self.total}")
+
+        if self.model_times:
+            fastest = min(self.model_times)
+            slowest = max(self.model_times)
+            print(f"Fastest model: {self._format_time(fastest)}")
+            print(f"Slowest model: {self._format_time(slowest)}")
 
 
 # =============================================================================
@@ -589,13 +733,44 @@ class ModelResult:
     converged: bool
 
 
-def estimate(database, model_func, null_ll) -> Optional[ModelResult]:
-    """Estimate single model."""
+def estimate(database, model_func, null_ll,
+             warm_start: Dict[str, float] = None,
+             use_robust: bool = True) -> Optional[ModelResult]:
+    """
+    Estimate single model with optional convergence management.
+
+    Args:
+        database: Biogeme database
+        model_func: Model function returning (logprob, name)
+        null_ll: Null log-likelihood for rho-squared
+        warm_start: Optional starting values from previous model
+        use_robust: If True, use robust convergence management
+
+    Returns:
+        ModelResult or None if estimation fails
+    """
     try:
         logprob, name = model_func(database)
 
-        biogeme = bio.BIOGEME(database, logprob)
-        results = biogeme.estimate()
+        # Use robust estimation with retry if available
+        if use_robust and CONVERGENCE_MANAGEMENT_AVAILABLE:
+            manager = ConvergenceManager(max_attempts=3, verbose=False)
+            results, diagnostics = manager.estimate_until_convergence(
+                database, model_func, model_name=name, warm_start=warm_start
+            )
+            if results is None:
+                print(f"  WARNING: {name} failed all convergence attempts")
+                return None
+        else:
+            # Fall back to basic estimation
+            biogeme = bio.BIOGEME(database, logprob)
+            if warm_start:
+                try:
+                    biogeme.set_variables_values(warm_start)
+                except:
+                    pass
+            results = biogeme.estimate()
+            diagnostics = None
 
         ll = results.final_loglikelihood
         k = results.number_of_free_parameters
@@ -613,6 +788,16 @@ def estimate(database, model_func, null_ll) -> Optional[ModelResult]:
                 t_stats[p] = betas[p] / se if se > 0 else np.nan
             except:
                 t_stats[p] = np.nan
+
+        # Log convergence diagnostics if available
+        if diagnostics and not diagnostics.publication_ready:
+            print(f"  Convergence note for {name}:")
+            if not diagnostics.converged:
+                print(f"    - Did not fully converge")
+            if diagnostics.gradient_norm > 1e-5:
+                print(f"    - Gradient norm: {diagnostics.gradient_norm:.2e}")
+            if diagnostics.hessian_condition_number > 1e6:
+                print(f"    - High condition number: {diagnostics.hessian_condition_number:.2e}")
 
         return ModelResult(
             name=name, ll=ll, k=k, aic=aic, bic=bic, rho2=rho2,
@@ -684,17 +869,56 @@ def run_split_lv_analysis(data_path: str, output_dir: str = None):
     ]
 
     results = []
+    convergence_diagnostics = {}
 
+    # Count total models
+    total_models = sum(len(funcs) for _, funcs in all_models)
+
+    # Initialize progress tracker
+    tracker = ProgressTracker(total_models=total_models)
+
+    print(f"\nEstimating {total_models} models...")
+    print("-" * 70)
+
+    # Estimate baseline first to use for warm-starting
+    tracker.start_model("M0: Baseline MNL")
+    model_start = time.time()
+    baseline_result = estimate(database, model_baseline, null_ll, use_robust=True)
+    model_elapsed = time.time() - model_start
+
+    if baseline_result:
+        tracker.update(baseline_result.name, model_elapsed, baseline_result)
+        results.append(baseline_result)
+        # Extract warm-start values from baseline
+        baseline_params = baseline_result.params
+    else:
+        tracker.update("M0: Baseline MNL", model_elapsed)
+        baseline_params = None
+
+    # Estimate remaining models with warm-start
     for section_name, model_funcs in all_models:
-        print(f"\n{'='*70}")
-        print(f"SECTION: {section_name}")
-        print("=" * 70)
-
         for model_func in model_funcs:
-            r = estimate(database, model_func, null_ll)
+            # Skip baseline as already estimated
+            if model_func == model_baseline:
+                continue
+
+            # Get model name for progress display
+            model_name = model_func.__name__.replace('model_', '').replace('_', ' ').title()
+            tracker.start_model(model_name)
+
+            model_start = time.time()
+            r = estimate(database, model_func, null_ll,
+                        warm_start=baseline_params, use_robust=True)
+            model_elapsed = time.time() - model_start
+
             if r:
-                print_result(r)
+                tracker.update(r.name, model_elapsed, r)
                 results.append(r)
+            else:
+                tracker.update(model_name, model_elapsed)
+
+    # Show final timing summary
+    tracker.finish()
 
     # Summary comparison
     print("\n" + "=" * 70)
@@ -762,6 +986,40 @@ def run_split_lv_analysis(data_path: str, output_dir: str = None):
         pd.DataFrame(param_rows).to_csv(output_dir / 'parameters.csv', index=False)
 
         print(f"\nOutputs saved to: {output_dir}")
+
+    # CONVERGENCE SUMMARY
+    print("\n" + "=" * 70)
+    print("CONVERGENCE SUMMARY")
+    print("=" * 70)
+
+    all_converged = all(r.converged for r in results)
+    n_converged = sum(1 for r in results if r.converged)
+    print(f"Models converged: {n_converged}/{len(results)}")
+
+    if not all_converged:
+        print("\nModels with convergence issues:")
+        for r in results:
+            if not r.converged:
+                print(f"  - {r.name}")
+    else:
+        print("All models converged successfully!")
+
+    # Generate convergence diagnostics table if available
+    if CONVERGENCE_MANAGEMENT_AVAILABLE and output_dir:
+        # Re-run diagnostics for summary
+        checker = ConvergenceChecker()
+        diagnostics_summary = []
+        for r in results:
+            diagnostics_summary.append({
+                'Model': r.name,
+                'Converged': r.converged,
+                'LL': r.ll,
+                'K': r.k,
+                'AIC': r.aic,
+            })
+        pd.DataFrame(diagnostics_summary).to_csv(
+            output_dir / 'convergence_summary.csv', index=False
+        )
 
     # PUBLICATION-READY VALIDATION (NEW)
     # Run measurement validation

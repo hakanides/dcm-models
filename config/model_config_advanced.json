@@ -1,16 +1,16 @@
 
 {
   "population": {
-    "N": 500,
-    "T": 100,
+    "N": 1000,
+    "T": 10,
     "seed": 123
   },
   "design": {
-    "path": "scenarios_prepared.csv",
+    "path": "data/raw/scenarios_prepared.csv",
     "sample_without_replacement": true
   },
   "measurement": {
-    "items_path": "items_config_advanced.csv",
+    "items_path": "config/items_config_advanced.csv",
     "thresholds": [-1.5, -0.5, 0.5, 1.5]
   },
   "demographics": {
@@ -124,7 +124,7 @@
     "fee_scale": 10000.0,
     "alts": { "1": "paid1", "2": "paid2", "3": "standard" },
     "base_terms": [
-      { "name": "ASC_paid", "apply_to": ["paid1", "paid2"], "term": "const", "coef": 0.25 },
+      { "name": "ASC_paid", "apply_to": ["paid1", "paid2"], "term": "const", "coef": 5.0 },
       { "name": "ASC_std",  "apply_to": ["standard"],       "term": "const", "coef": 0.00 }
     ],
     "attribute_terms": [
@@ -132,7 +132,7 @@
         "name": "b_fee10k",
         "apply_to": ["paid1", "paid2"],
         "term": "fee10k",
-        "base_coef": -1.0,
+        "base_coef": -0.08,
         "enforce_sign": "negative",
         "interactions": [
           { "with": "age_idx",          "coef": 0.06, "enforce_sign": "positive", "center": 2.0, "scale": 2.0 },

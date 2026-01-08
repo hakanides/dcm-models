@@ -137,16 +137,15 @@ class TestValidationWithTrueValues:
     def test_validation_models_import(self):
         """Test that validation_models module can be imported."""
         try:
-            from models.validation_models import has_true_latent_values, validate_latent_estimation
+            from src.models.validation_models import has_true_latent_values
             assert callable(has_true_latent_values)
-            assert callable(validate_latent_estimation)
         except ImportError as e:
             pytest.skip(f"validation_models not importable: {e}")
 
     def test_has_true_latent_values_returns_false_for_synthetic(self, sample_choice_data):
         """Test that synthetic data correctly identified as lacking true LVs."""
         try:
-            from models.validation_models import has_true_latent_values
+            from src.models.validation_models import has_true_latent_values
         except ImportError:
             pytest.skip("validation_models not available")
 

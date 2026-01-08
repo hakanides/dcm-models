@@ -136,6 +136,25 @@ from src.utils.latex_output import (
     generate_all_simulation_latex
 )
 
+# Import extended model modules
+try:
+    from src.models.mnl_extended import run_mnl_extended
+    HAS_MNL_EXTENDED = True
+except ImportError:
+    HAS_MNL_EXTENDED = False
+
+try:
+    from src.models.mxl_extended import run_mxl_extended
+    HAS_MXL_EXTENDED = True
+except ImportError:
+    HAS_MXL_EXTENDED = False
+
+try:
+    from src.models.hcm_extended import run_hcm_extended
+    HAS_HCM_EXTENDED = True
+except ImportError:
+    HAS_HCM_EXTENDED = False
+
 # =============================================================================
 # ISSUE #40: CROSS-VALIDATION MODULE
 # =============================================================================
@@ -194,7 +213,7 @@ def cleanup_iter_files(project_root: Path = None):
 # LOAD TRUE PARAMETERS FROM CONFIG
 # =============================================================================
 
-def load_true_params(config_path: str = "config/model_config.json") -> dict:
+def load_true_params(config_path: str = "config/model_config_advanced.json") -> dict:
     """Load true parameter values from config."""
     with open(config_path) as f:
         config = json.load(f)
@@ -223,7 +242,7 @@ def load_true_params(config_path: str = "config/model_config.json") -> dict:
 # DATA PREPARATION
 # =============================================================================
 
-def load_centering_config(config_path: str = "config/model_config.json") -> dict:
+def load_centering_config(config_path: str = "config/model_config_advanced.json") -> dict:
     """Extract centering/scaling parameters from config for validation."""
     with open(config_path) as f:
         config = json.load(f)
@@ -240,7 +259,7 @@ def load_centering_config(config_path: str = "config/model_config.json") -> dict
     return centering
 
 
-def prepare_data(data_path: str, config_path: str = "config/model_config.json"):
+def prepare_data(data_path: str, config_path: str = "config/model_config_advanced.json"):
     """Load and prepare data for all models.
 
     IMPORTANT: Centering and scaling MUST match model_config.json exactly!
@@ -1210,7 +1229,7 @@ def compare_to_true(result, true_params, min_true_value: float = 0.01):
 
     return pd.DataFrame(comparison)
 
-def run_all_models(data_path: str = "data/test_validation.csv"):
+def run_all_models(data_path: str = "data/full_scale_test.csv"):
     """Run all models and compare to true parameters."""
 
     print("="*80)
@@ -1250,9 +1269,12 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
     # MXL Configuration
     # Set PRODUCTION_MODE = True for publication-quality results (slower)
     # Set PRODUCTION_MODE = False for development/testing (faster)
-    PRODUCTION_MODE = False  # Change to True for final runs
+    PRODUCTION_MODE = True  # Full-scale test with publication-ready draws
 
-    MXL_DRAWS = 5000 if PRODUCTION_MODE else 1000
+    # NOTE: 10,000 draws causes OOM during Hessian calculation with panel data
+    # NOTE: 5,000 draws ALSO causes OOM during Hessian with 1000x10 panel data
+    # 2,000 draws is minimum for stable estimates with this data size
+    MXL_DRAWS = 2000 if PRODUCTION_MODE else 1000
 
     # ISSUE #28 FIX: Document draw requirements and add stability warning
     # Recommendations from literature:
@@ -1380,8 +1402,8 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
         'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
     }
 
-    # Load original df for alpha computation (df_num dropped some columns)
-    df_for_alpha = pd.read_csv("data/simulated/simulated_data.csv")
+    # Use original df for alpha computation (df_num dropped some columns)
+    df_for_alpha = df  # df still has Likert columns needed for reliability
 
     print("\nLATENT VARIABLE RELIABILITY (Cronbach's Alpha):")
     print("-" * 50)
@@ -1442,6 +1464,214 @@ def run_all_models(data_path: str = "data/test_validation.csv"):
                 print(f"  ⚠️  SKIPPING parameter comparison - model did not converge")
         except Exception as e:
             print(f"  ERROR: {e}")
+
+    # ==========================================================================
+    # ICLV MODELS (Simultaneous Estimation - Unbiased)
+    # ==========================================================================
+    print("\n" + "="*80)
+    print("ICLV MODELS (Simultaneous Estimation)")
+    print("="*80)
+    print("\nICLV eliminates attenuation bias by jointly estimating")
+    print("measurement and choice models via Simulated Maximum Likelihood.")
+
+    try:
+        from src.models.iclv import estimate_iclv, ICLVResult
+
+        # Define constructs for ICLV (same as HCM)
+        iclv_constructs = {
+            'pat_blind': [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()],
+            'pat_const': [c for c in df.columns if c.startswith('pat_constructive_') and c[-1].isdigit()],
+            'sec_dl': [c for c in df.columns if c.startswith('sec_dl_') and c[-1].isdigit()],
+            'sec_fp': [c for c in df.columns if c.startswith('sec_fp_') and c[-1].isdigit()],
+        }
+
+        # Define covariates for structural model
+        iclv_covariates = ['age_idx', 'edu_idx', 'income_indiv_idx']
+        iclv_covariates = [c for c in iclv_covariates if c in df.columns]
+
+        # Define LV effects in utility
+        lv_effects = {
+            'pat_blind': 'B_FEE_PatBlind',
+            'sec_dl': 'B_FEE_SecDL',
+        }
+
+        print(f"\nEstimating ICLV with {len(iclv_constructs)} latent constructs...")
+        print(f"  Constructs: {list(iclv_constructs.keys())}")
+        print(f"  Covariates: {iclv_covariates}")
+        print(f"  LV effects: {list(lv_effects.keys())}")
+
+        # Run ICLV estimation
+        iclv_result = estimate_iclv(
+            df=df,
+            constructs=iclv_constructs,
+            covariates=iclv_covariates,
+            choice_col='CHOICE',
+            attribute_cols=['fee1_10k', 'fee2_10k', 'fee3_10k', 'dur1', 'dur2', 'dur3'],
+            lv_effects=lv_effects,
+            n_draws=500,
+            n_categories=5,
+            verbose=True
+        )
+
+        # Convert ICLV result to standard format for comparison
+        if iclv_result is not None:
+            iclv_summary = {
+                'name': 'ICLV: Simultaneous',
+                'll': iclv_result.log_likelihood if hasattr(iclv_result, 'log_likelihood') else np.nan,
+                'k': iclv_result.n_parameters if hasattr(iclv_result, 'n_parameters') else 0,
+                'aic': iclv_result.aic if hasattr(iclv_result, 'aic') else np.nan,
+                'bic': iclv_result.bic if hasattr(iclv_result, 'bic') else np.nan,
+                'rho2': 1 - (iclv_result.log_likelihood / null_ll) if hasattr(iclv_result, 'log_likelihood') else np.nan,
+                'converged': iclv_result.converged if hasattr(iclv_result, 'converged') else True,
+                'betas': iclv_result.beta if hasattr(iclv_result, 'beta') else {},
+                't_stats': {},
+            }
+            all_results.append(iclv_summary)
+            print(f"\n  ICLV estimation complete!")
+            if hasattr(iclv_result, 'log_likelihood'):
+                print(f"  LL: {iclv_result.log_likelihood:.2f}")
+
+    except ImportError as e:
+        print(f"\n  ICLV module not available: {e}")
+        print("  Skipping ICLV estimation. Install dependencies or check imports.")
+    except Exception as e:
+        print(f"\n  ERROR in ICLV estimation: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # ==========================================================================
+    # EXTENDED MODEL SPECIFICATIONS
+    # ==========================================================================
+    # Run extended model comparisons with alternative functional forms,
+    # distributions, and interaction patterns.
+
+    extended_results = {}
+
+    # MNL Extended Models
+    if HAS_MNL_EXTENDED:
+        print("\n" + "="*80)
+        print("EXTENDED MNL MODELS (8 specifications)")
+        print("="*80)
+        try:
+            mnl_ext_results, mnl_ext_df = run_mnl_extended(
+                data_path=data_path,
+                output_dir=str(output_dir / 'mnl_extended')
+            )
+            extended_results['mnl_extended'] = {
+                'results': mnl_ext_results,
+                'comparison': mnl_ext_df
+            }
+            # Add best extended MNL to main comparison
+            if mnl_ext_df is not None and len(mnl_ext_df) > 0:
+                best_mnl_ext = mnl_ext_df.loc[mnl_ext_df['AIC'].idxmin()]
+                best_mnl_ext_result = next(
+                    (r for r in mnl_ext_results if r.name == best_mnl_ext['Model']),
+                    None
+                )
+                if best_mnl_ext_result:
+                    all_results.append({
+                        'name': f"MNL-Ext: {best_mnl_ext_result.name}",
+                        'll': best_mnl_ext_result.ll,
+                        'k': best_mnl_ext_result.k,
+                        'aic': best_mnl_ext_result.aic,
+                        'bic': best_mnl_ext_result.bic,
+                        'rho2': best_mnl_ext_result.rho2,
+                        'converged': best_mnl_ext_result.converged,
+                        'betas': best_mnl_ext_result.params,
+                        'std_errs': best_mnl_ext_result.std_errs,
+                    })
+        except Exception as e:
+            print(f"  ERROR in extended MNL: {e}")
+    else:
+        print("\n  MNL Extended module not available")
+
+    # MXL Extended Models
+    if HAS_MXL_EXTENDED:
+        print("\n" + "="*80)
+        print("EXTENDED MXL MODELS (8 specifications)")
+        print("="*80)
+        try:
+            # Use fewer draws for extended models to save time
+            MXL_EXT_DRAWS = 500 if PRODUCTION_MODE else 300
+            mxl_ext_results, mxl_ext_df = run_mxl_extended(
+                data_path=data_path,
+                output_dir=str(output_dir / 'mxl_extended'),
+                n_draws=MXL_EXT_DRAWS
+            )
+            extended_results['mxl_extended'] = {
+                'results': mxl_ext_results,
+                'comparison': mxl_ext_df
+            }
+            # Add best extended MXL to main comparison
+            if mxl_ext_df is not None and len(mxl_ext_df) > 0:
+                best_mxl_ext = mxl_ext_df.loc[mxl_ext_df['AIC'].idxmin()]
+                best_mxl_ext_result = next(
+                    (r for r in mxl_ext_results if r.name == best_mxl_ext['Model']),
+                    None
+                )
+                if best_mxl_ext_result:
+                    all_results.append({
+                        'name': f"MXL-Ext: {best_mxl_ext_result.name}",
+                        'll': best_mxl_ext_result.ll,
+                        'k': best_mxl_ext_result.k,
+                        'aic': best_mxl_ext_result.aic,
+                        'bic': best_mxl_ext_result.bic,
+                        'rho2': best_mxl_ext_result.rho2,
+                        'converged': best_mxl_ext_result.converged,
+                        'betas': best_mxl_ext_result.params,
+                        'std_errs': best_mxl_ext_result.std_errs,
+                    })
+        except Exception as e:
+            print(f"  ERROR in extended MXL: {e}")
+    else:
+        print("\n  MXL Extended module not available")
+
+    # HCM Extended Models
+    if HAS_HCM_EXTENDED:
+        print("\n" + "="*80)
+        print("EXTENDED HCM MODELS (8 specifications)")
+        print("="*80)
+        try:
+            hcm_ext_results, hcm_ext_df = run_hcm_extended(
+                data_path=data_path,
+                output_dir=str(output_dir / 'hcm_extended')
+            )
+            extended_results['hcm_extended'] = {
+                'results': hcm_ext_results,
+                'comparison': hcm_ext_df
+            }
+            # Add best extended HCM to main comparison
+            if hcm_ext_df is not None and len(hcm_ext_df) > 0:
+                best_hcm_ext = hcm_ext_df.loc[hcm_ext_df['AIC'].idxmin()]
+                best_hcm_ext_result = next(
+                    (r for r in hcm_ext_results if r.name == best_hcm_ext['Model']),
+                    None
+                )
+                if best_hcm_ext_result:
+                    all_results.append({
+                        'name': f"HCM-Ext: {best_hcm_ext_result.name}",
+                        'll': best_hcm_ext_result.ll,
+                        'k': best_hcm_ext_result.k,
+                        'aic': best_hcm_ext_result.aic,
+                        'bic': best_hcm_ext_result.bic,
+                        'rho2': best_hcm_ext_result.rho2,
+                        'converged': best_hcm_ext_result.converged,
+                        'betas': best_hcm_ext_result.params,
+                        'std_errs': best_hcm_ext_result.std_errs,
+                    })
+        except Exception as e:
+            print(f"  ERROR in extended HCM: {e}")
+    else:
+        print("\n  HCM Extended module not available")
+
+    # Save extended model comparisons
+    if extended_results:
+        print("\n" + "-"*80)
+        print("EXTENDED MODEL COMPARISON FILES SAVED:")
+        for family, data in extended_results.items():
+            if data['comparison'] is not None:
+                ext_path = output_dir / family / 'model_comparison.csv'
+                print(f"  {ext_path}")
 
     # Summary table
     print("\n" + "="*80)

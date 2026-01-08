@@ -527,6 +527,34 @@ class ICLVModel:
         n_individuals = len(df)
 
         # Prepare data dict
+        n_alts = df[choice_col].max() + 1
+
+        # Prepare attributes array from wide-format columns
+        # Detect base attribute names (e.g., 'fee' from 'fee1', 'fee2', 'fee3')
+        base_attrs = set()
+        for col in attribute_cols:
+            base = col.rstrip('0123456789')
+            if base and base != col:
+                base_attrs.add(base)
+
+        if base_attrs:
+            # Wide format: columns like fee1, fee2, fee3, dur1, dur2, dur3
+            attribute_names = sorted(list(base_attrs))
+            attributes = np.zeros((n_individuals, n_alts, len(attribute_names)))
+
+            for attr_idx, base_attr in enumerate(attribute_names):
+                for alt in range(n_alts):
+                    col_name = f'{base_attr}{alt + 1}'
+                    if col_name in df.columns:
+                        attributes[:, alt, attr_idx] = df[col_name].values
+        else:
+            # No alternative-specific attributes found
+            attribute_names = attribute_cols
+            attributes = np.zeros((n_individuals, n_alts, len(attribute_cols)))
+            for attr_idx, col in enumerate(attribute_cols):
+                if col in df.columns:
+                    attributes[:, :, attr_idx] = df[col].values[:, np.newaxis]
+
         data = {
             'n_individuals': n_individuals,
             'choices': df[choice_col].values.astype(int),
@@ -534,15 +562,12 @@ class ICLVModel:
             'covariate_names': covariate_cols,
             'indicators': df[indicator_cols].values,
             'item_names': indicator_cols,
+            'attributes': attributes,
+            'attribute_names': attribute_names,
         }
 
-        # Prepare attributes (need to reshape based on format)
-        # Assuming wide format with columns for each alt-attribute combination
-        # This is a simplified version - real implementation would handle various formats
-        n_alts = df[choice_col].max() + 1
-
         # Initialize starting values
-        beta_init = {col: 0.0 for col in attribute_cols}
+        beta_init = {col: 0.0 for col in attribute_names}
         gamma_init = {lv: {cov: 0.0 for cov in covariate_cols}
                      for lv in self.construct_names}
 

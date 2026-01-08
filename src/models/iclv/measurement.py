@@ -161,6 +161,163 @@ class OrderedProbitMeasurement:
 
         return log_probs
 
+    # =========================================================================
+    # ANALYTICAL GRADIENTS
+    # =========================================================================
+
+    def gradient_loading(self,
+                         response: int,
+                         loading: float,
+                         lv_value: float) -> float:
+        """
+        Compute analytical gradient of log probability w.r.t. loading.
+
+        ∂log P(y=j|η)/∂λ = [φ(τ_{j-1} - λη) - φ(τ_j - λη)] * (-η) / P(y=j|η)
+
+        Where φ is the standard normal PDF.
+
+        Args:
+            response: Observed response (1 to n_categories)
+            loading: Factor loading
+            lv_value: Latent variable value
+
+        Returns:
+            Gradient w.r.t. loading
+        """
+        j = response - 1  # 0-indexed
+
+        # Adjusted thresholds
+        adj_thresholds = self.thresholds - loading * lv_value
+
+        # Get threshold values for this response
+        tau_lower = -np.inf if j == 0 else adj_thresholds[j - 1]
+        tau_upper = np.inf if j == self.n_categories - 1 else adj_thresholds[j]
+
+        # PDF values at thresholds
+        pdf_lower = stats.norm.pdf(tau_lower) if j > 0 else 0.0
+        pdf_upper = stats.norm.pdf(tau_upper) if j < self.n_categories - 1 else 0.0
+
+        # Probability
+        prob = self.response_probabilities(loading, lv_value)[j]
+
+        # Gradient: (φ(τ_{j-1}) - φ(τ_j)) * (-η) / P
+        grad = (pdf_lower - pdf_upper) * (-lv_value) / prob
+
+        return grad
+
+    def gradient_threshold(self,
+                           response: int,
+                           loading: float,
+                           lv_value: float,
+                           threshold_idx: int) -> float:
+        """
+        Compute analytical gradient of log probability w.r.t. threshold.
+
+        ∂log P(y=j|η)/∂τ_k depends on whether k = j-1 or k = j:
+        - If k = j-1: ∂/∂τ_k = -φ(τ_{j-1} - λη) / P(y=j|η)
+        - If k = j:   ∂/∂τ_k = +φ(τ_j - λη) / P(y=j|η)
+        - Otherwise:  ∂/∂τ_k = 0
+
+        Args:
+            response: Observed response (1 to n_categories)
+            loading: Factor loading
+            lv_value: Latent variable value
+            threshold_idx: Index of threshold (0 to n_categories-2)
+
+        Returns:
+            Gradient w.r.t. specified threshold
+        """
+        j = response - 1  # 0-indexed response
+        k = threshold_idx
+
+        adj_thresholds = self.thresholds - loading * lv_value
+        prob = self.response_probabilities(loading, lv_value)[j]
+
+        if k == j - 1 and j > 0:
+            # Lower threshold for this category
+            pdf_val = stats.norm.pdf(adj_thresholds[k])
+            return -pdf_val / prob
+        elif k == j and j < self.n_categories - 1:
+            # Upper threshold for this category
+            pdf_val = stats.norm.pdf(adj_thresholds[k])
+            return pdf_val / prob
+        else:
+            return 0.0
+
+    def gradient_lv(self,
+                    response: int,
+                    loading: float,
+                    lv_value: float) -> float:
+        """
+        Compute analytical gradient of log probability w.r.t. LV value.
+
+        ∂log P(y=j|η)/∂η = [φ(τ_{j-1} - λη) - φ(τ_j - λη)] * (-λ) / P(y=j|η)
+
+        Args:
+            response: Observed response (1 to n_categories)
+            loading: Factor loading
+            lv_value: Latent variable value
+
+        Returns:
+            Gradient w.r.t. LV value
+        """
+        j = response - 1
+
+        adj_thresholds = self.thresholds - loading * lv_value
+
+        tau_lower = -np.inf if j == 0 else adj_thresholds[j - 1]
+        tau_upper = np.inf if j == self.n_categories - 1 else adj_thresholds[j]
+
+        pdf_lower = stats.norm.pdf(tau_lower) if j > 0 else 0.0
+        pdf_upper = stats.norm.pdf(tau_upper) if j < self.n_categories - 1 else 0.0
+
+        prob = self.response_probabilities(loading, lv_value)[j]
+
+        grad = (pdf_lower - pdf_upper) * (-loading) / prob
+
+        return grad
+
+    def gradient_all(self,
+                     response: int,
+                     loading: float,
+                     lv_value: float) -> Dict[str, float]:
+        """
+        Compute all gradients at once (more efficient).
+
+        Returns:
+            Dict with 'loading', 'thresholds' (array), and 'lv' gradients
+        """
+        j = response - 1
+
+        adj_thresholds = self.thresholds - loading * lv_value
+
+        tau_lower = -np.inf if j == 0 else adj_thresholds[j - 1]
+        tau_upper = np.inf if j == self.n_categories - 1 else adj_thresholds[j]
+
+        pdf_lower = stats.norm.pdf(tau_lower) if j > 0 else 0.0
+        pdf_upper = stats.norm.pdf(tau_upper) if j < self.n_categories - 1 else 0.0
+
+        prob = self.response_probabilities(loading, lv_value)[j]
+
+        # Loading gradient
+        grad_loading = (pdf_lower - pdf_upper) * (-lv_value) / prob
+
+        # LV gradient
+        grad_lv = (pdf_lower - pdf_upper) * (-loading) / prob
+
+        # Threshold gradients
+        grad_thresholds = np.zeros(len(self.thresholds))
+        if j > 0:
+            grad_thresholds[j - 1] = -pdf_lower / prob
+        if j < self.n_categories - 1:
+            grad_thresholds[j] = pdf_upper / prob
+
+        return {
+            'loading': grad_loading,
+            'lv': grad_lv,
+            'thresholds': grad_thresholds
+        }
+
 
 class MeasurementLikelihood:
     """

@@ -37,16 +37,38 @@ from .core import ICLVModel, ICLVResult
 from .measurement import OrderedProbitMeasurement, MeasurementLikelihood
 from .structural import StructuralModel
 from .integration import HaltonDraws, MonteCarloIntegrator
-from .estimation import SMLEstimator, estimate_iclv
+from .estimation import (
+    SMLEstimator,
+    estimate_iclv,
+    EstimationConfig,
+    compare_two_stage_vs_iclv,
+    summarize_attenuation_bias,
+    compute_two_stage_starting_values,
+    auto_scale_attributes,
+    ScalingInfo,
+)
 
 __all__ = [
+    # Core
     'ICLVModel',
     'ICLVResult',
+    # Measurement
     'OrderedProbitMeasurement',
     'MeasurementLikelihood',
+    # Structural
     'StructuralModel',
+    # Integration
     'HaltonDraws',
     'MonteCarloIntegrator',
+    # Estimation
     'SMLEstimator',
-    'estimate_iclv'
+    'estimate_iclv',
+    'EstimationConfig',
+    # Comparison tools
+    'compare_two_stage_vs_iclv',
+    'summarize_attenuation_bias',
+    # Utilities
+    'compute_two_stage_starting_values',
+    'auto_scale_attributes',
+    'ScalingInfo',
 ]

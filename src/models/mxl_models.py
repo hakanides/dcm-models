@@ -69,21 +69,27 @@ def cleanup_iter_files(project_root: Path = None):
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable, bioDraws, MonteCarlo, log, exp
+from biogeme.expressions import Beta, Variable, MonteCarlo, log, exp
+
+# Use Draws instead of deprecated bioDraws
+try:
+    from biogeme.expressions import Draws
+except ImportError:
+    from biogeme.expressions import bioDraws as Draws
 
 
 # =============================================================================
 # DATA
 # =============================================================================
 
-def load_data(data_path: str, use_panel: bool = True) -> Tuple[pd.DataFrame, db.Database]:
+def load_data(data_path: str, use_panel: bool = False) -> Tuple[pd.DataFrame, db.Database]:
     """Load and prepare data for MXL estimation.
 
     Args:
         data_path: Path to CSV data file
         use_panel: If True, specify panel structure using 'ID' column.
-                   IMPORTANT for MXL: Panel structure ensures random coefficients
-                   are correlated within individuals across choice situations.
+                   NOTE: Panel structure is disabled by default due to
+                   compatibility issues with Biogeme 3.3.x.
 
     Returns:
         Tuple of (DataFrame, Biogeme Database)
@@ -102,14 +108,16 @@ def load_data(data_path: str, use_panel: bool = True) -> Tuple[pd.DataFrame, db.
 
     database = db.Database('mxl_data', df_num)
 
-    # PANEL STRUCTURE: Critical for MXL with repeated observations
-    # This ensures the same random coefficient draw is used for all
-    # choice situations belonging to the same individual
+    # PANEL STRUCTURE: Disabled by default for Biogeme 3.3.x compatibility
+    # When enabled, ensures same random coefficient draw across choice tasks per individual
     if use_panel and 'ID' in df_num.columns:
         database.panel('ID')
         n_individuals = df['ID'].nunique()
         n_obs_per_person = len(df) / n_individuals
         print(f"Panel structure: {n_individuals} individuals, {n_obs_per_person:.1f} obs/person avg")
+    else:
+        n_individuals = df['ID'].nunique() if 'ID' in df.columns else len(df)
+        print(f"Data: {n_individuals} individuals (panel structure disabled)")
 
     return df, database
 
@@ -144,7 +152,7 @@ def mxl_1_random_fee(database: db.Database):
     B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.001, 5, 0)  # Bounded positive
 
     # Random coefficient
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
 
     # Utilities
     V1 = ASC_paid + B_FEE_RND * v['fee1_10k'] + B_DUR * v['dur1']
@@ -177,8 +185,8 @@ def mxl_2_random_fee_dur(database: db.Database):
     B_DUR_MU = Beta('B_DUR_MU', -0.05, -5, 0, 0)  # Bounded negative
     B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.001, 2, 0)  # Bounded positive
 
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
-    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * bioDraws('B_DUR_RND', 'NORMAL')
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
+    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * Draws('B_DUR_RND', 'NORMAL')
 
     # Utilities
     V1 = ASC_paid + B_FEE_RND * v['fee1_10k'] + B_DUR_RND * v['dur1']
@@ -208,8 +216,8 @@ def mxl_3_random_all(database: db.Database):
     B_DUR_MU = Beta('B_DUR_MU', -0.05, -5, 0, 0)  # Bounded negative
     B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.001, 2, 0)  # Bounded positive
 
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
-    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * bioDraws('B_DUR_RND', 'NORMAL')
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
+    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * Draws('B_DUR_RND', 'NORMAL')
 
     # Utilities
     V1 = ASC_paid + B_FEE_RND * v['fee1_10k'] + B_DUR_RND * v['dur1']
