@@ -262,15 +262,24 @@ class ConvergenceChecker:
         elif hasattr(result, 'success'):
             converged = result.success
         else:
-            converged = True  # Assume converged if no flag
+            # Conservative default: don't assume convergence without evidence
+            converged = False
+            warnings.warn("Cannot determine convergence status - assuming not converged")
 
-        # Get iteration count
+        # Get iteration count (note: Biogeme may not expose this directly)
+        iterations = 0
         if hasattr(result, 'number_of_iterations'):
             iterations = result.number_of_iterations
         elif hasattr(result, 'nit'):
             iterations = result.nit
         else:
-            iterations = 0
+            # Try to get from general statistics
+            try:
+                stats = result.get_general_statistics()
+                # Iteration count not typically in stats, so default to 0
+                iterations = 0
+            except Exception:
+                iterations = 0
 
         # Get final log-likelihood
         if hasattr(result, 'final_loglikelihood'):

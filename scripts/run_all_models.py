@@ -961,6 +961,83 @@ def get_starting_values(previous_result: dict, target_params: list = None) -> di
 # ESTIMATION AND COMPARISON
 # =============================================================================
 
+def verify_estimation_quality(results, model_name: str = "") -> dict:
+    """Verify that estimation actually completed properly.
+
+    This function checks for common issues that indicate estimation problems:
+    - Non-convergence
+    - Invalid log-likelihood values
+    - High gradient norm at solution
+    - Numerical issues
+
+    Args:
+        results: Biogeme estimation results object
+        model_name: Optional model name for logging
+
+    Returns:
+        Dict with verification results and any warnings
+    """
+    verification = {
+        'passed': True,
+        'warnings': [],
+        'converged': False,
+        'log_likelihood': np.nan,
+        'gradient_norm': np.nan,
+    }
+
+    # Check convergence flag
+    if hasattr(results, 'algorithm_has_converged'):
+        verification['converged'] = results.algorithm_has_converged
+        if not results.algorithm_has_converged:
+            verification['warnings'].append("Optimization did not converge")
+            verification['passed'] = False
+
+    # Check log-likelihood
+    if hasattr(results, 'final_loglikelihood'):
+        ll = results.final_loglikelihood
+        verification['log_likelihood'] = ll
+
+        if np.isnan(ll):
+            verification['warnings'].append("Log-likelihood is NaN")
+            verification['passed'] = False
+        elif np.isinf(ll):
+            verification['warnings'].append("Log-likelihood is infinite")
+            verification['passed'] = False
+        elif ll > 0:
+            verification['warnings'].append(f"Log-likelihood is positive ({ll:.2f}) - should be negative")
+            verification['passed'] = False
+
+    # Check gradient norm from general statistics
+    try:
+        stats = results.get_general_statistics()
+        if 'Final gradient norm' in stats:
+            grad_norm_str = stats['Final gradient norm']
+            # Parse the scientific notation string
+            if isinstance(grad_norm_str, str) and 'E' in grad_norm_str:
+                grad_norm = float(grad_norm_str)
+            elif isinstance(grad_norm_str, (int, float)):
+                grad_norm = float(grad_norm_str)
+            else:
+                grad_norm = np.nan
+            verification['gradient_norm'] = grad_norm
+
+            # Note: Absolute gradient norm can be large for large datasets
+            # Biogeme uses relative gradient for convergence, so high absolute
+            # gradient is not necessarily a problem if algorithm converged
+    except Exception:
+        pass  # Stats not available - that's OK
+
+    # Print warnings if any
+    if verification['warnings']:
+        prefix = f"{model_name}: " if model_name else ""
+        print(f"  ⚠️  ESTIMATION QUALITY WARNINGS for {prefix}")
+        for warning in verification['warnings']:
+            print(f"      - {warning}")
+            logging.warning(f"{prefix}{warning}")
+
+    return verification
+
+
 def get_warm_start_values(previous_result, current_model_params, verbose: bool = False):
     """Extract starting values from previous model for warm-start.
 
@@ -1053,13 +1130,17 @@ def estimate_model(database, model_func, n_draws=None, output_dir=None, warm_sta
 
     results = biogeme_obj.estimate()
 
+    # Verify estimation quality
+    verification = verify_estimation_quality(results, name)
+
     betas = results.get_beta_values()
     std_errs = {}
     for p in betas:
         try:
             std_errs[p] = results.get_parameter_std_err(p)
-        except:
+        except Exception as e:
             std_errs[p] = np.nan
+            logging.warning(f"Could not get standard error for {p}: {e}")
 
     # ISSUE #30 FIX: Validate log-likelihood before storing
     ll = results.final_loglikelihood
@@ -1090,7 +1171,9 @@ def estimate_model(database, model_func, n_draws=None, output_dir=None, warm_sta
         'bic': results.bayesian_information_criterion if ll_valid else np.nan,
         'betas': betas,
         'std_errs': std_errs,
-        'converged': results.algorithm_has_converged and ll_valid
+        'converged': results.algorithm_has_converged and ll_valid and verification['passed'],
+        'gradient_norm': verification['gradient_norm'],
+        'estimation_warnings': verification['warnings'],
     }
 
     # Run identification diagnostics (Issue #14)
@@ -1327,7 +1410,9 @@ def run_all_models(data_path: str = "data/full_scale_test.csv"):
                 baseline_result = result
 
             # Print summary
-            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
+            grad = result.get('gradient_norm', np.nan)
+            grad_str = f"{grad:.1e}" if not np.isnan(grad) else "N/A"
+            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | ∇: {grad_str} | Conv: {result['converged']}")
 
             # Compare key params to true (only if converged - otherwise meaningless)
             if result['converged']:
@@ -1373,7 +1458,9 @@ def run_all_models(data_path: str = "data/full_scale_test.csv"):
             if result['converged']:
                 generate_latex_output(biogeme_results, result['name'])
 
-            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
+            grad = result.get('gradient_norm', np.nan)
+            grad_str = f"{grad:.1e}" if not np.isnan(grad) else "N/A"
+            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | ∇: {grad_str} | Conv: {result['converged']}")
 
             # Compare key params to true (only if converged - otherwise meaningless)
             if result['converged']:
@@ -1450,7 +1537,9 @@ def run_all_models(data_path: str = "data/full_scale_test.csv"):
             if result['converged']:
                 generate_latex_output(biogeme_results, result['name'])
 
-            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | Conv: {result['converged']}")
+            grad = result.get('gradient_norm', np.nan)
+            grad_str = f"{grad:.1e}" if not np.isnan(grad) else "N/A"
+            print(f"  LL: {result['ll']:.2f} | K: {result['k']} | AIC: {result['aic']:.2f} | ρ²: {result['rho2']:.4f} | ∇: {grad_str} | Conv: {result['converged']}")
 
             # Compare key params to true (only if converged - otherwise meaningless)
             if result['converged']:

@@ -648,6 +648,52 @@ class DCMSimulator:
             alt_name = self.choice_model.alternatives[str(choice)]
             print(f"  Alternative {choice} ({alt_name}): {share:.1%}")
 
+    # =========================================================================
+    # PUBLIC METHODS FOR STANDALONE SIMULATION
+    # =========================================================================
+
+    def simulate_demographics(self, n: int) -> pd.DataFrame:
+        """
+        Simulate demographic attributes for n individuals.
+
+        Args:
+            n: Number of individuals to simulate
+
+        Returns:
+            DataFrame with demographic columns (age_idx, edu_idx, etc.)
+        """
+        records = []
+        for i in range(n):
+            demo = self.population._draw_demographics()
+            demo['ID'] = i
+            records.append(demo)
+        return pd.DataFrame(records)
+
+    def simulate_likert_responses(self, n: int) -> pd.DataFrame:
+        """
+        Simulate Likert scale responses for n individuals.
+
+        This generates latent variables from demographics and then
+        generates Likert responses from the measurement model.
+
+        Args:
+            n: Number of individuals to simulate
+
+        Returns:
+            DataFrame with Likert response columns (pat_blind_1, etc.)
+        """
+        records = []
+        for i in range(n):
+            # Draw demographics
+            demo = self.population._draw_demographics()
+            # Compute latent variables
+            latent_vars = self.population._compute_latent_variables(demo)
+            # Generate Likert responses
+            likert = self.population._generate_likert_responses(latent_vars)
+            likert['ID'] = i
+            records.append(likert)
+        return pd.DataFrame(records)
+
     def export(self, output_path: str, keep_latent: bool = False) -> None:
         """
         Run simulation and export to CSV.

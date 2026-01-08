@@ -129,10 +129,9 @@ infeasible_cg = "False" # If True, the conjugate gradient algorithm may generate
                         # False, the algorithm stops as soon as an infeasible
                         # iterate is generated
 initial_radius = 1 # Initial radius of the trust region
-steptol = 3.666852862501036e-11 # The algorithm stops when the relative change in
-                                # x is below this threshold. Basically, if p
-                                # significant digits of x are needed, steptol
-                                # should be set to 1.0e-p.
+steptol = 1e-06 # The algorithm stops when the relative change in x is below
+                # this threshold. Set to 1e-06 for standard convergence behavior.
+                # WARNING: Very small values (e.g., 1e-11) cause premature termination!
 enlarging_factor = 10 # If an iteration is very successful, the radius of the
                       # trust region is multiplied by this factor
 

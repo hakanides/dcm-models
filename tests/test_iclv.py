@@ -262,9 +262,14 @@ class TestICLVEstimation:
         try:
             from src.models.iclv import estimate_iclv
 
+            # Define covariates for structural model
+            covariates = ['age_idx', 'edu_idx']
+            covariates = [c for c in covariates if c in iclv_data.columns]
+
             result = estimate_iclv(
                 df=iclv_data,
                 constructs=iclv_constructs,
+                covariates=covariates,
                 choice_col='CHOICE',
                 n_draws=20,  # Very small for speed
             )
@@ -286,9 +291,14 @@ class TestICLVEstimation:
         try:
             from src.models.iclv import estimate_iclv
 
+            # Define covariates for structural model
+            covariates = ['age_idx', 'edu_idx']
+            covariates = [c for c in covariates if c in iclv_data.columns]
+
             result = estimate_iclv(
                 df=iclv_data,
                 constructs=iclv_constructs,
+                covariates=covariates,
                 choice_col='CHOICE',
                 n_draws=20,
                 auto_scale=True,
@@ -308,9 +318,14 @@ class TestICLVEstimation:
         try:
             from src.models.iclv import estimate_iclv
 
+            # Define covariates for structural model
+            covariates = ['age_idx', 'edu_idx']
+            covariates = [c for c in covariates if c in iclv_data.columns]
+
             result = estimate_iclv(
                 df=iclv_data,
                 constructs=iclv_constructs,
+                covariates=covariates,
                 choice_col='CHOICE',
                 n_draws=20,
                 use_two_stage_start=True,
