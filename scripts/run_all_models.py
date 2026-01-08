@@ -1312,7 +1312,7 @@ def compare_to_true(result, true_params, min_true_value: float = 0.01):
 
     return pd.DataFrame(comparison)
 
-def run_all_models(data_path: str = "data/full_scale_test.csv"):
+def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
     """Run all models and compare to true parameters."""
 
     print("="*80)

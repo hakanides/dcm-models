@@ -459,7 +459,7 @@ def estimate_mnl_with_latent_proxies(database: db.Database) -> tuple:
 
 
 def run_validation(
-    data_path: str = "data/test_validation.csv",
+    data_path: str = "data/simulated/test_validation.csv",
     config_path: str = "config/model_config.json"
 ):
     """Run complete validation pipeline."""

@@ -5,11 +5,11 @@
     "seed": 123
   },
   "design": {
-    "path": "data/scenarios_prepared.csv",
+    "path": "data/raw/scenarios_prepared.csv",
     "sample_without_replacement": true
   },
   "measurement": {
-    "items_path": "data/config/items_config.csv",
+    "items_path": "config/items_config.csv",
     "thresholds": [
       -1.5,
       -0.5,

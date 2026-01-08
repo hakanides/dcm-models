@@ -10,7 +10,7 @@
         "seed": 42
     },
     "design": {
-        "path": "data/scenarios.csv",
+        "path": "data/raw/scenarios_prepared.csv",
         "sample_without_replacement": true
     },
     "demographics": {
