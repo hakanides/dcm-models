@@ -36,7 +36,7 @@ Author: DCM Research Team
 from .core import ICLVModel, ICLVResult
 from .measurement import OrderedProbitMeasurement, MeasurementLikelihood
 from .structural import StructuralModel
-from .integration import HaltonDraws, MonteCarloIntegrator
+from .integration import HaltonDraws, MonteCarloIntegrator, generate_halton_draws
 from .estimation import (
     SMLEstimator,
     estimate_iclv,
@@ -60,6 +60,7 @@ __all__ = [
     # Integration
     'HaltonDraws',
     'MonteCarloIntegrator',
+    'generate_halton_draws',
     # Estimation
     'SMLEstimator',
     'estimate_iclv',

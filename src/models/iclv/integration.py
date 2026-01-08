@@ -318,6 +318,51 @@ def create_antithetic_draws(draws: np.ndarray) -> np.ndarray:
     return np.concatenate([draws, antithetic], axis=1)
 
 
+def generate_halton_draws(
+    n_individuals: int,
+    n_draws: int = 500,
+    n_dimensions: int = 1,
+    seed: int = 42,
+    return_uniform: bool = False
+) -> np.ndarray:
+    """
+    Generate Halton draws for simulation-based estimation.
+
+    This is a convenience wrapper around the HaltonDraws class for quick access
+    to quasi-random draws commonly used in Mixed Logit and ICLV estimation.
+
+    Args:
+        n_individuals: Number of individuals/decision-makers
+        n_draws: Number of draws per individual (default 500)
+        n_dimensions: Number of latent variable dimensions (default 1)
+        seed: Random seed for scrambling (default 42)
+        return_uniform: If True, return uniform (0,1) draws; else standard normal
+
+    Returns:
+        np.ndarray of shape (n_individuals, n_draws, n_dimensions)
+        containing quasi-random draws
+
+    Example:
+        >>> draws = generate_halton_draws(1000, n_draws=200, n_dimensions=2)
+        >>> draws.shape
+        (1000, 200, 2)
+        >>> draws.mean()  # Should be ~0 for normal draws
+        >>> draws.std()   # Should be ~1 for normal draws
+    """
+    generator = HaltonDraws(
+        n_draws=n_draws,
+        n_dimensions=n_dimensions,
+        scramble=True,
+        seed=seed
+    )
+
+    if return_uniform:
+        return generator.generate_uniform(n_individuals)
+    else:
+        result = generator.generate(n_individuals)
+        return result.draws
+
+
 if __name__ == '__main__':
     print("ICLV Integration Module")
     print("=" * 40)

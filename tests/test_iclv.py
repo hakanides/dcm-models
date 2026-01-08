@@ -283,7 +283,7 @@ class TestICLVEstimation:
         except Exception as e:
             # Allow estimation to fail on small data, but should run
             if "convergence" in str(e).lower():
-                pytest.skip("Convergence issue on small test data")
+                pytest.xfail("ICLV did not converge - expected on small test data (50×10=500 obs)")
             raise
 
     def test_iclv_with_auto_scale(self, iclv_data, iclv_constructs):
@@ -310,7 +310,7 @@ class TestICLVEstimation:
             pytest.skip(f"ICLV not available: {e}")
         except Exception as e:
             if "convergence" in str(e).lower():
-                pytest.skip("Convergence issue on small test data")
+                pytest.xfail("ICLV did not converge - expected on small test data (50×10=500 obs)")
             raise
 
     def test_iclv_with_two_stage_start(self, iclv_data, iclv_constructs):
@@ -337,7 +337,7 @@ class TestICLVEstimation:
             pytest.skip(f"ICLV not available: {e}")
         except Exception as e:
             if "convergence" in str(e).lower():
-                pytest.skip("Convergence issue on small test data")
+                pytest.xfail("ICLV did not converge - expected on small test data (50×10=500 obs)")
             raise
 
 
