@@ -234,23 +234,53 @@ class MeasurementModel:
         else:
             self.items_df = None
 
-    def generate_indicators(self, latent_vars: Dict[str, float]) -> Tuple[Dict[str, int], Dict[str, float]]:
+    def generate_indicators(
+        self,
+        latent_vars: Dict[str, float],
+        demographics: Dict[str, int] = None
+    ) -> Tuple[Dict[str, int], Dict[str, float]]:
         """
         Generate all indicator responses for an agent.
+
+        Implements MIMIC (Multiple Indicators Multiple Causes) model where
+        demographics can have direct effects on indicators in addition to
+        their indirect effect through latent variables.
+
+        Args:
+            latent_vars: Dict of latent variable values {lv_name: value}
+            demographics: Dict of demographic values for direct effects (optional)
+                         Supported keys: age_idx, edu_idx, income_indiv_idx
 
         Returns:
             Tuple of (ordinal_responses, continuous_responses)
         """
         ordinal = {}
         continuous = {}
+        demographics = demographics or {}
 
         if self.items_df is None:
             return ordinal, continuous
+
+        # Define mapping from demographic variables to config columns
+        demo_columns = [
+            ('age_idx', 'direct_age'),
+            ('edu_idx', 'direct_edu'),
+            ('income_indiv_idx', 'direct_income')
+        ]
 
         for _, item in self.items_df.iterrows():
             lv_name = self._factor_to_lv_name(item['factor'])
             lv_value = latent_vars.get(lv_name, 0.0)
             loading = float(item['loading'])
+
+            # Calculate direct demographic effects (MIMIC component)
+            direct_effect = 0.0
+            for demo_var, config_col in demo_columns:
+                if config_col in item.index:
+                    coef = item[config_col]
+                    if pd.notna(coef) and coef != 0:
+                        demo_val = float(demographics.get(demo_var, 0))
+                        direct_effect += float(coef) * demo_val
 
             # Determine indicator type
             indicator_type = item.get('type', 'ordinal')
@@ -260,18 +290,19 @@ class MeasurementModel:
             item_name = str(item['item_name'])
 
             if indicator_type == 'continuous':
-                # Continuous: y = λ*η + ε
+                # Continuous: y = λ*η + γ*demo + ε (MIMIC)
                 error_var = float(item.get('error_var', 1.0))
-                y = loading * lv_value + np.sqrt(error_var) * self.rng.standard_normal()
+                y = loading * lv_value + direct_effect + np.sqrt(error_var) * self.rng.standard_normal()
                 continuous[item_name] = y
 
             elif indicator_type == 'binary':
-                # Binary probit: P(y=1) = Φ(λ*η)
-                y_star = loading * lv_value + self.rng.standard_normal()
+                # Binary probit: P(y=1) = Φ(λ*η + γ*demo) (MIMIC)
+                y_star = loading * lv_value + direct_effect + self.rng.standard_normal()
                 ordinal[item_name] = 1 if y_star > 0 else 0
 
             else:  # ordinal (default)
-                y_star = loading * lv_value + self.rng.standard_normal()
+                # Ordinal probit: y* = λ*η + γ*demo + ε (MIMIC)
+                y_star = loading * lv_value + direct_effect + self.rng.standard_normal()
                 response = self._ordinal_from_continuous(y_star)
 
                 # ISSUE #22 FIX: Configurable reverse coding
@@ -594,8 +625,11 @@ class Population:
         # 5. Combine systematic + random to get final taste parameters
         taste_params = self._combine_taste_parameters(systematic_betas, random_draws)
 
-        # 6. Generate indicator responses (measurement model)
-        likert_responses, continuous_indicators = self.measurement_model.generate_indicators(latent_vars)
+        # 6. Generate indicator responses (measurement model with MIMIC direct effects)
+        likert_responses, continuous_indicators = self.measurement_model.generate_indicators(
+            latent_vars=latent_vars,
+            demographics=demographics  # Pass demographics for MIMIC direct effects
+        )
 
         return Agent(
             agent_id=agent_id,

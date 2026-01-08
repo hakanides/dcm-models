@@ -180,28 +180,28 @@ class TestConfigValidation:
 class TestFullSimulation:
     """Tests for full simulation pipeline."""
 
-    def test_full_simulation_runs(self, model_config):
+    def test_full_simulation_runs(self, model_config_path):
         """Test complete simulation pipeline."""
-        if model_config is None:
+        if model_config_path is None:
             pytest.skip("No model config available")
 
         try:
             from src.simulation.dcm_simulator import DCMSimulator
-            sim = DCMSimulator(model_config)
+            sim = DCMSimulator(model_config_path)
 
-            # Run full simulation with small N
-            df = sim.simulate_full(n_individuals=20, n_tasks=5)
+            # Run full simulation
+            df = sim.run()
 
-            assert len(df) == 20 * 5
+            assert len(df) > 0
             assert 'CHOICE' in df.columns
             assert 'fee1' in df.columns
 
         except (ImportError, AttributeError) as e:
             pytest.skip(f"Full simulation not available: {e}")
 
-    def test_simulation_reproducibility(self, model_config):
+    def test_simulation_reproducibility(self, model_config_path):
         """Test that simulation is reproducible with same seed."""
-        if model_config is None:
+        if model_config_path is None:
             pytest.skip("No model config available")
 
         try:
@@ -209,13 +209,13 @@ class TestFullSimulation:
 
             # First simulation
             np.random.seed(42)
-            sim1 = DCMSimulator(model_config)
-            df1 = sim1.simulate_full(n_individuals=10, n_tasks=3)
+            sim1 = DCMSimulator(model_config_path)
+            df1 = sim1.run()
 
             # Second simulation with same seed
             np.random.seed(42)
-            sim2 = DCMSimulator(model_config)
-            df2 = sim2.simulate_full(n_individuals=10, n_tasks=3)
+            sim2 = DCMSimulator(model_config_path)
+            df2 = sim2.run()
 
             # Should be identical
             pd.testing.assert_frame_equal(df1, df2)

@@ -45,6 +45,20 @@ def model_config():
 
 
 @pytest.fixture(scope="session")
+def model_config_path():
+    """Return path to model configuration file."""
+    config_path = PROJECT_ROOT / 'config' / 'model_config_advanced.json'
+    if config_path.exists():
+        return str(config_path)
+
+    # Fallback to simple config
+    config_path = PROJECT_ROOT / 'config' / 'model_config.json'
+    if config_path.exists():
+        return str(config_path)
+    return None
+
+
+@pytest.fixture(scope="session")
 def items_config():
     """Load items configuration."""
     config_path = PROJECT_ROOT / 'config' / 'items_config_advanced.csv'
