@@ -189,17 +189,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python final_comparison.py
-  python final_comparison.py --mnl results/mnl/latest/model_comparison.csv
-  python final_comparison.py --output results/final_comparison
+  python final_comparison.py --mnl results/mnl_basic/model_comparison.csv \\
+                             --mxl results/mxl_basic/mxl_comparison.csv \\
+                             --hcm results/hcm_basic/hcm_comparison.csv
+
+Note: This script compares outputs from individual model scripts.
+      For comprehensive analysis, use scripts/run_all_models.py instead.
         """
     )
-    parser.add_argument('--mnl', default='results/mnl/latest/model_comparison.csv',
-                        help='Path to MNL comparison CSV')
-    parser.add_argument('--mxl', default='results/mxl/latest/mxl_comparison.csv',
-                        help='Path to MXL comparison CSV')
-    parser.add_argument('--hcm', default='results/hcm/latest/hcm_comparison.csv',
-                        help='Path to HCM comparison CSV')
+    parser.add_argument('--mnl', default=None,
+                        help='Path to MNL comparison CSV (required)')
+    parser.add_argument('--mxl', default=None,
+                        help='Path to MXL comparison CSV (required)')
+    parser.add_argument('--hcm', default=None,
+                        help='Path to HCM comparison CSV (required)')
     parser.add_argument('--output', default='results/final_comparison',
                         help='Output directory')
     parser.add_argument('--all-models', action='store_true',

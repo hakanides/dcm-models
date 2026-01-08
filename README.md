@@ -107,28 +107,21 @@ DCM-Research/
 ├── config/                              # Configuration files
 │   ├── model_config_advanced.json       # Main config with true parameters
 │   ├── model_config.json                # Simple config for testing
-│   └── items_config_advanced.csv        # Likert scale item definitions
+│   ├── items_config.csv                 # Likert scale item definitions
+│   └── items_config_advanced.csv        # Advanced item definitions
 │
 ├── src/
 │   ├── models/                          # Model specifications
 │   │   ├── mnl_basic.py                 # Basic MNL
 │   │   ├── mnl_demographics.py          # MNL with demographics
 │   │   ├── mnl_extended.py              # 8 MNL specifications
-│   │   ├── mnl_model_comparison.py      # MNL comparison runner
 │   │   ├── mxl_basic.py                 # Basic Mixed Logit
 │   │   ├── mxl_extended.py              # 8 MXL specifications
-│   │   ├── mxl_models.py                # MXL comparison runner
 │   │   ├── hcm_basic.py                 # Basic HCM (single LV)
 │   │   ├── hcm_full.py                  # Full HCM (all LVs)
 │   │   ├── hcm_extended.py              # 8 HCM specifications
 │   │   ├── hcm_split_latents.py         # Two-stage HCM
 │   │   ├── iclv/                        # ICLV module (enhanced)
-│   │   │   ├── __init__.py
-│   │   │   ├── core.py                  # ICLVModel class
-│   │   │   ├── estimation.py            # SML estimator + enhancements
-│   │   │   ├── measurement.py           # Ordered probit + gradients
-│   │   │   ├── structural.py            # Demographics → LV
-│   │   │   └── integration.py           # Halton draws, MC integration
 │   │   ├── model_factory.py             # Model registry
 │   │   └── validation_models.py         # True LV benchmark
 │   │
@@ -139,30 +132,47 @@ DCM-Research/
 │   │
 │   ├── estimation/                      # Estimation utilities
 │   │   ├── robust_estimation.py         # Convergence management
+│   │   ├── convergence_diagnostics.py   # Convergence checking
 │   │   ├── model_comparison.py          # LR tests, AIC/BIC
 │   │   ├── measurement_validation.py    # Cronbach's α, AVE, CR
 │   │   ├── bootstrap_inference.py       # Bootstrap CIs
 │   │   └── cross_validation.py          # K-fold CV
 │   │
 │   ├── policy_analysis/                 # Policy applications
-│   │   ├── wtp.py                       # Willingness-to-pay
+│   │   ├── wtp_analysis.py              # Willingness-to-pay
 │   │   ├── elasticity.py                # Price/duration elasticities
 │   │   └── demand_forecasting.py        # Market share prediction
+│   │
+│   ├── analysis/                        # Analysis tools
+│   │   ├── final_comparison.py          # Cross-model comparison
+│   │   └── sensitivity_analysis.py      # Sensitivity analysis
+│   │
+│   ├── validation/                      # Validation tools
+│   │   └── monte_carlo.py               # Monte Carlo studies
 │   │
 │   └── utils/                           # Utilities
 │       ├── latex_output.py              # LaTeX table generation
 │       └── visualization.py             # Publication figures
 │
 ├── scripts/
-│   └── run_all_models.py                # Main pipeline script
+│   ├── run_all_models.py                # Main pipeline script
+│   └── validate_estimation.py           # Validation script
 │
 ├── data/
+│   ├── raw/                             # Raw scenario definitions
+│   │   └── scenarios_prepared.csv
 │   └── simulated/                       # Generated simulation data
 │
 ├── output/
-│   └── latex/                           # LaTeX tables by model family
+│   ├── latex/                           # LaTeX tables by model family
+│   │   ├── MNL/
+│   │   ├── MXL/
+│   │   ├── HCM/
+│   │   └── simulation/
+│   └── logs/                            # Log files
 │
-├── results/                             # Estimation results
+├── results/
+│   └── all_models/                      # Model estimation results
 │
 ├── tests/                               # Test suite
 │
@@ -239,9 +249,9 @@ DCM-Research/
 from src.models.mnl_basic import estimate_mnl_basic
 
 result = estimate_mnl_basic(
-    data_path='data/simulated/fresh_simulation.csv',
+    data_path='data/simulated/full_scale_test.csv',
     config_path='config/model_config_advanced.json',
-    output_dir='results/mnl'
+    output_dir='results/all_models'
 )
 print(f"Log-likelihood: {result['log_likelihood']:.2f}")
 print(f"AIC: {result['aic']:.2f}")
@@ -253,8 +263,8 @@ print(f"AIC: {result['aic']:.2f}")
 from src.models.mxl_extended import run_mxl_extended
 
 results, comparison = run_mxl_extended(
-    data_path='data/simulated/fresh_simulation.csv',
-    output_dir='results/mxl',
+    data_path='data/simulated/full_scale_test.csv',
+    output_dir='results/all_models',
     n_draws=500
 )
 print(comparison.to_string())
@@ -266,8 +276,8 @@ print(comparison.to_string())
 from src.models.hcm_extended import run_hcm_extended
 
 results, comparison = run_hcm_extended(
-    data_path='data/simulated/fresh_simulation.csv',
-    output_dir='results/hcm'
+    data_path='data/simulated/full_scale_test.csv',
+    output_dir='results/all_models'
 )
 ```
 

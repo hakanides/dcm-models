@@ -43,7 +43,7 @@ python scripts/run_all_models.py
 ```
 
 **What happens:**
-1. Loads data from `data/simulated/fresh_simulation.csv`
+1. Loads data from `data/simulated/full_scale_test.csv`
 2. Estimates basic MNL models (baseline + demographics)
 3. Estimates basic MXL models (random parameters)
 4. Estimates basic HCM models (latent variables, two-stage)
@@ -132,28 +132,28 @@ python src/simulation/simulate_full_data.py \
 
 ```bash
 # Basic MNL Models
-python src/models/mnl_model_comparison.py --data data/simulated/fresh_simulation.csv
+python src/models/mnl_model_comparison.py --data data/simulated/full_scale_test.csv
 
 # Extended MNL (8 specifications)
-python -c "from src.models.mnl_extended import run_mnl_extended; run_mnl_extended('data/simulated/fresh_simulation.csv')"
+python -c "from src.models.mnl_extended import run_mnl_extended; run_mnl_extended('data/simulated/full_scale_test.csv')"
 
 # Basic MXL Models (takes longer due to simulation draws)
-python src/models/mxl_models.py --data data/simulated/fresh_simulation.csv --draws 500
+python src/models/mxl_models.py --data data/simulated/full_scale_test.csv --draws 500
 
 # Extended MXL (8 specifications)
-python -c "from src.models.mxl_extended import run_mxl_extended; run_mxl_extended('data/simulated/fresh_simulation.csv', n_draws=500)"
+python -c "from src.models.mxl_extended import run_mxl_extended; run_mxl_extended('data/simulated/full_scale_test.csv', n_draws=500)"
 
 # HCM with 4 latent variable constructs
-python src/models/hcm_split_latents.py --data data/simulated/fresh_simulation.csv
+python src/models/hcm_split_latents.py --data data/simulated/full_scale_test.csv
 
 # Extended HCM (8 specifications)
-python -c "from src.models.hcm_extended import run_hcm_extended; run_hcm_extended('data/simulated/fresh_simulation.csv')"
+python -c "from src.models.hcm_extended import run_hcm_extended; run_hcm_extended('data/simulated/full_scale_test.csv')"
 
 # ICLV (simultaneous estimation)
 python -c "
 from src.models.iclv import estimate_iclv
 import pandas as pd
-df = pd.read_csv('data/simulated/fresh_simulation.csv')
+df = pd.read_csv('data/simulated/full_scale_test.csv')
 result = estimate_iclv(
     df=df,
     constructs={'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3']},
