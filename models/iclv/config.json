@@ -23,7 +23,7 @@
     "seed": 42
   },
   "design": {
-    "path": "../../data/raw/scenarios_prepared.csv"
+    "path": "../../full_model/data/raw/scenarios_prepared.csv"
   },
   "demographics": {
     "age_idx": {

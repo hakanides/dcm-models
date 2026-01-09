@@ -2,6 +2,7 @@
   "model_info": {
     "name": "MNL Demographics",
     "description": "MNL with demographic interactions on fee and duration sensitivity",
+    "design_note": "INTENTIONAL ASYMMETRY: B_FEE has age/edu/income interactions, B_DUR only has edu/income. Age affects fee sensitivity (older=less price sensitive) but NOT duration sensitivity. This reflects the hypothesis that time valuation is driven by education/income (opportunity cost) rather than age.",
     "parameters": ["ASC_paid", "B_FEE", "B_FEE_AGE", "B_FEE_EDU", "B_FEE_INC", "B_DUR", "B_DUR_EDU", "B_DUR_INC"],
     "true_values": {
       "ASC_paid": 5.0,
@@ -20,7 +21,7 @@
     "seed": 42
   },
   "design": {
-    "path": "../../data/raw/scenarios_prepared.csv",
+    "path": "../../full_model/data/raw/scenarios_prepared.csv",
     "sample_with_replacement": true
   },
   "demographics": {

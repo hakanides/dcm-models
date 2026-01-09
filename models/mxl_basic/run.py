@@ -4,9 +4,12 @@ MXL Basic - Isolated Model Validation
 =====================================
 
 This script runs the complete validation pipeline for MXL Basic:
-1. Generate simulated data with random fee coefficient
-2. Estimate the model using simulated maximum likelihood
-3. Compare estimates to true parameters
+1. Clean previous outputs
+2. Generate simulated data with random fee coefficient
+3. Estimate the model using simulated maximum likelihood
+4. Generate policy analysis (WTP distribution, elasticities)
+5. Generate LaTeX tables
+6. Compare estimates to true parameters
 
 Expected result: Unbiased parameter recovery (<10% bias, 95% CI coverage)
 
@@ -21,11 +24,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.cleanup import cleanup_before_run
+
 
 def main():
     parser = argparse.ArgumentParser(description='Run MXL Basic validation')
     parser.add_argument('--skip_simulation', action='store_true',
                         help='Skip simulation, use existing data')
+    parser.add_argument('--skip_cleanup', action='store_true',
+                        help='Skip cleanup of previous outputs')
     parser.add_argument('--draws', type=int, default=500,
                         help='Number of simulation draws (default: 500)')
 
@@ -38,6 +47,10 @@ def main():
     print("=" * 70)
     print("\nThis validates that MXL Basic can recover true parameters")
     print("when the DGP includes random coefficient heterogeneity.\n")
+
+    # Step 0: Cleanup previous outputs
+    if not args.skip_cleanup:
+        cleanup_before_run(model_dir)
 
     # Step 1: Generate data
     if not args.skip_simulation:
@@ -74,11 +87,25 @@ def main():
     print("\n" + "=" * 70)
     print("VALIDATION COMPLETE")
     print("=" * 70)
-    print(f"\nResults saved to: {model_dir / 'results'}")
-    print(f"  - parameter_estimates.csv")
-    print(f"  - model_comparison.csv")
-    print(f"  - MXL_Basic.html")
-    print(f"\nIndividual coefficients saved to: {model_dir / 'data' / 'individual_coefficients.csv'}")
+    print(f"\nOutputs saved to:")
+    print(f"  results/")
+    print(f"    - parameter_estimates.csv")
+    print(f"    - model_comparison.csv")
+    print(f"    - MXL_Basic.html")
+    print(f"  data/")
+    print(f"    - individual_coefficients.csv")
+    print(f"  output/latex/")
+    print(f"    - parameter_table.tex")
+    print(f"    - model_summary.tex")
+    print(f"    - policy_summary.tex")
+    print(f"  policy_analysis/")
+    print(f"    - wtp_results.csv (with distribution)")
+    print(f"    - elasticity_matrix.csv")
+    print(f"    - market_shares.csv")
+    print(f"  sample_stats/")
+    print(f"    - demographics_summary.csv")
+    print(f"    - choice_distribution.csv")
+    print(f"    - *.png (plots)")
 
 
 if __name__ == "__main__":

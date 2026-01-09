@@ -13,7 +13,13 @@ This simulator generates data that matches exactly what MNL Basic can estimate:
 import json
 import numpy as np
 import pandas as pd
+import sys
 from pathlib import Path
+
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.sample_stats import generate_sample_stats
+from shared.cleanup import cleanup_simulation_outputs
 
 
 def softmax(utilities: np.ndarray) -> np.ndarray:
@@ -21,6 +27,24 @@ def softmax(utilities: np.ndarray) -> np.ndarray:
     u = utilities - np.max(utilities)  # Numerical stability
     exp_u = np.exp(u)
     return exp_u / exp_u.sum()
+
+
+def draw_gumbel_errors(rng: np.random.Generator, n: int) -> np.ndarray:
+    """
+    Draw Gumbel(0,1) errors for random utility model.
+
+    The Gumbel distribution is derived from uniform: ε = -ln(-ln(U))
+    where U ~ Uniform(0,1).
+
+    This explicit error structure makes the RUM foundation clear:
+    U_ij = V_ij + ε_ij, where ε_ij ~ iid Gumbel(0,1)
+
+    Note: Drawing from Gumbel and choosing argmax is mathematically
+    equivalent to multinomial sampling from softmax probabilities,
+    but makes the error structure explicit for pedagogical purposes.
+    """
+    u = rng.uniform(1e-10, 1 - 1e-10, size=n)  # Avoid log(0)
+    return -np.log(-np.log(u))
 
 
 def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
@@ -129,9 +153,13 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
 
             utilities = np.array(utilities)
 
-            # Compute choice probabilities and draw choice
-            probs = softmax(utilities)
-            choice_idx = rng.choice(len(alt_indices), p=probs)
+            # Add Gumbel errors to get total utilities (RUM: U = V + ε)
+            # This makes the random utility foundation explicit
+            gumbel_errors = draw_gumbel_errors(rng, len(utilities))
+            total_utilities = utilities + gumbel_errors
+
+            # Choose alternative with highest total utility
+            choice_idx = np.argmax(total_utilities)
             choice = int(alt_indices[choice_idx])
 
             # Build record with all needed columns
@@ -177,7 +205,17 @@ def main():
     print("MNL Basic - Data Simulation")
     print("=" * 60)
 
+    # Clean previous simulation outputs
+    cleanup_simulation_outputs(model_dir)
+
+    # Run simulation
     df = simulate(config_path, output_path)
+
+    # Generate sample statistics
+    with open(config_path) as f:
+        config = json.load(f)
+    stats_dir = model_dir / "sample_stats"
+    generate_sample_stats(df, config, stats_dir)
 
     print("\n" + "=" * 60)
     print("Simulation complete!")

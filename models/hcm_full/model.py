@@ -21,6 +21,7 @@ Note: Two-stage estimation causes attenuation bias on ALL LV effects.
 
 import json
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -28,6 +29,11 @@ import numpy as np
 import pandas as pd
 
 warnings.filterwarnings('ignore')
+
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.policy_tools import run_policy_analysis
+from shared.latex_tools import generate_all_latex
 
 import biogeme.database as db
 import biogeme.biogeme as bio
@@ -328,7 +334,11 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
         'std_errors': stderrs,
         't_stats': tstats,
         'p_values': pvals,
-        'true_values': true_values
+        'true_values': true_values,
+        # Include biogeme results for policy analysis
+        'biogeme_results': results,
+        'data': df,
+        'config': config
     }
 
     param_rows = []
@@ -372,8 +382,45 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
 
 
 def main():
+    """Entry point for standalone execution."""
     model_dir = Path(__file__).parent
-    estimate(model_dir)
+    results = estimate(model_dir)
+
+    # Run policy analysis (enhanced for full HCM with segment analysis)
+    policy_dir = model_dir / 'policy_analysis'
+    policy_dir.mkdir(exist_ok=True)
+
+    print("\n" + "=" * 70)
+    print("POLICY ANALYSIS")
+    print("=" * 70)
+
+    policy_results = run_policy_analysis(
+        biogeme_results=results['biogeme_results'],
+        df=results['data'],
+        config=results['config'],
+        output_dir=policy_dir,
+        model_type='HCM_FULL',
+        verbose=True
+    )
+
+    # Generate LaTeX tables
+    latex_dir = model_dir / 'output' / 'latex'
+    latex_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n" + "=" * 70)
+    print("LATEX OUTPUT")
+    print("=" * 70)
+
+    generate_all_latex(
+        biogeme_results=results['biogeme_results'],
+        true_values=results['true_values'],
+        policy_results=policy_results,
+        output_dir=latex_dir,
+        model_name='HCM_Full'
+    )
+
+    print(f"\nPolicy analysis saved to: {policy_dir}")
+    print(f"LaTeX tables saved to: {latex_dir}")
 
 
 if __name__ == "__main__":

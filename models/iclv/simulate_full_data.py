@@ -19,7 +19,13 @@ Measurement Model:
 import json
 import numpy as np
 import pandas as pd
+import sys
 from pathlib import Path
+
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.sample_stats import generate_sample_stats
+from shared.cleanup import cleanup_simulation_outputs
 from scipy import stats
 
 
@@ -28,6 +34,17 @@ def softmax(utilities: np.ndarray) -> np.ndarray:
     u = utilities - np.max(utilities)
     exp_u = np.exp(u)
     return exp_u / exp_u.sum()
+
+
+def draw_gumbel_errors(rng: np.random.Generator, n: int) -> np.ndarray:
+    """
+    Draw Gumbel(0,1) errors for random utility model.
+
+    The Gumbel distribution: ε = -ln(-ln(U)) where U ~ Uniform(0,1).
+    This makes the RUM foundation explicit: U_ij = V_ij + ε_ij
+    """
+    u = rng.uniform(1e-10, 1 - 1e-10, size=n)
+    return -np.log(-np.log(u))
 
 
 def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
@@ -203,8 +220,13 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
                 utilities.append(u)
 
             utilities = np.array(utilities)
-            probs = softmax(utilities)
-            choice_idx = rng.choice(len(alt_indices), p=probs)
+
+            # Add Gumbel errors to get total utilities (RUM: U = V + ε)
+            gumbel_errors = draw_gumbel_errors(rng, len(utilities))
+            total_utilities = utilities + gumbel_errors
+
+            # Choose alternative with highest total utility
+            choice_idx = np.argmax(total_utilities)
             choice = int(alt_indices[choice_idx])
 
             record = {
@@ -254,6 +276,7 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
 
 
 def main():
+    """Entry point for standalone execution."""
     model_dir = Path(__file__).parent
     config_path = model_dir / "config.json"
     output_path = model_dir / "data" / "simulated_data.csv"
@@ -266,7 +289,17 @@ def main():
     print("  - sec_dl (Daily Life Secularism) ~ education")
     print()
 
+    # Clean previous simulation outputs
+    cleanup_simulation_outputs(model_dir)
+
+    # Run simulation
     df = simulate(config_path, output_path)
+
+    # Generate sample statistics
+    with open(config_path) as f:
+        config = json.load(f)
+    stats_dir = model_dir / "sample_stats"
+    generate_sample_stats(df, config, stats_dir)
 
     print("\n" + "=" * 60)
     print("Simulation complete!")

@@ -17,6 +17,7 @@ True Parameters (from config):
 """
 
 import json
+import sys
 import warnings
 from pathlib import Path
 
@@ -29,6 +30,11 @@ import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
+
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.policy_tools import run_policy_analysis
+from shared.latex_tools import generate_all_latex
 
 
 def prepare_data(filepath: Path) -> pd.DataFrame:
@@ -261,13 +267,40 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     if verbose:
         print(f"\nResults saved to: {results_dir}")
 
+    # Return both dict and biogeme results for policy analysis
+    results_dict['biogeme_results'] = results
+    results_dict['data'] = df
+    results_dict['config'] = config
+
     return results_dict
 
 
 def main():
     """Entry point for standalone execution."""
     model_dir = Path(__file__).parent
-    estimate(model_dir)
+
+    # Run estimation
+    results = estimate(model_dir)
+
+    # Run policy analysis
+    policy_dir = model_dir / "policy_analysis"
+    policy_results = run_policy_analysis(
+        biogeme_results=results['biogeme_results'],
+        df=results['data'],
+        config=results['config'],
+        output_dir=policy_dir,
+        model_type='MNL'
+    )
+
+    # Generate LaTeX tables
+    latex_dir = model_dir / "output" / "latex"
+    generate_all_latex(
+        biogeme_results=results['biogeme_results'],
+        true_values=results['true_values'],
+        policy_results=policy_results,
+        output_dir=latex_dir,
+        model_name='MNL_Basic'
+    )
 
 
 if __name__ == "__main__":

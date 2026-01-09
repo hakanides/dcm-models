@@ -27,6 +27,7 @@ eliminating attenuation bias. Uses Monte Carlo simulation.
 
 import json
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -35,11 +36,16 @@ import pandas as pd
 
 warnings.filterwarnings('ignore')
 
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.policy_tools import run_policy_analysis
+from shared.latex_tools import generate_all_latex
+
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import (
-    Beta, Variable, bioDraws, MonteCarlo, log, Elem, bioNormalCdf
+    Beta, Variable, bioDraws, MonteCarlo, log, exp, Elem, bioNormalCdf
 )
 
 
@@ -122,17 +128,31 @@ def create_iclv_model(database: db.Database, config: dict):
     lambda_sdl_2 = Beta('lambda_sdl_2', 0.8, 0.1, 2, 0)
     lambda_sdl_3 = Beta('lambda_sdl_3', 0.8, 0.1, 2, 0)
 
-    # Measurement model - thresholds (ordered)
-    # tau_1 < tau_2 < tau_3 < tau_4 for 5 categories
-    tau_pb_1 = Beta('tau_pb_1', -1.0, -3, 3, 0)
-    tau_pb_2 = Beta('tau_pb_2', -0.35, -3, 3, 0)
-    tau_pb_3 = Beta('tau_pb_3', 0.35, -3, 3, 0)
-    tau_pb_4 = Beta('tau_pb_4', 1.0, -3, 3, 0)
+    # Measurement model - thresholds (ordered via delta parameterization)
+    # Using delta parameterization to GUARANTEE ordering: tau_1 < tau_2 < tau_3 < tau_4
+    # tau_1 is free, tau_k = tau_{k-1} + exp(delta_k) for k > 1
+    # This ensures strict ordering regardless of optimization path
 
+    # Pat_blind thresholds
+    tau_pb_1 = Beta('tau_pb_1', -1.0, -3, 3, 0)  # First threshold free
+    delta_pb_2 = Beta('delta_pb_2', -0.5, -3, 3, 0)  # log(gap) ≈ 0.6
+    delta_pb_3 = Beta('delta_pb_3', -0.3, -3, 3, 0)  # log(gap) ≈ 0.74
+    delta_pb_4 = Beta('delta_pb_4', -0.5, -3, 3, 0)  # log(gap) ≈ 0.6
+
+    # Compute ordered thresholds: tau_k = tau_{k-1} + exp(delta_k)
+    tau_pb_2 = tau_pb_1 + exp(delta_pb_2)
+    tau_pb_3 = tau_pb_2 + exp(delta_pb_3)
+    tau_pb_4 = tau_pb_3 + exp(delta_pb_4)
+
+    # Sec_dl thresholds (same structure)
     tau_sdl_1 = Beta('tau_sdl_1', -1.0, -3, 3, 0)
-    tau_sdl_2 = Beta('tau_sdl_2', -0.35, -3, 3, 0)
-    tau_sdl_3 = Beta('tau_sdl_3', 0.35, -3, 3, 0)
-    tau_sdl_4 = Beta('tau_sdl_4', 1.0, -3, 3, 0)
+    delta_sdl_2 = Beta('delta_sdl_2', -0.5, -3, 3, 0)
+    delta_sdl_3 = Beta('delta_sdl_3', -0.3, -3, 3, 0)
+    delta_sdl_4 = Beta('delta_sdl_4', -0.5, -3, 3, 0)
+
+    tau_sdl_2 = tau_sdl_1 + exp(delta_sdl_2)
+    tau_sdl_3 = tau_sdl_2 + exp(delta_sdl_3)
+    tau_sdl_4 = tau_sdl_3 + exp(delta_sdl_4)
 
     # ===== RANDOM DRAWS =====
     # Standard normal draws for latent variables
@@ -361,7 +381,11 @@ def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
         'std_errors': stderrs,
         't_stats': tstats,
         'p_values': pvals,
-        'true_values': true_values
+        'true_values': true_values,
+        # Include biogeme results for policy analysis
+        'biogeme_results': results,
+        'data': df,
+        'config': config
     }
 
     param_rows = []
@@ -404,8 +428,45 @@ def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
 
 
 def main():
+    """Entry point for standalone execution."""
     model_dir = Path(__file__).parent
-    estimate(model_dir)
+    results = estimate(model_dir)
+
+    # Run policy analysis (ICLV has unbiased LV effects)
+    policy_dir = model_dir / 'policy_analysis'
+    policy_dir.mkdir(exist_ok=True)
+
+    print("\n" + "=" * 70)
+    print("POLICY ANALYSIS")
+    print("=" * 70)
+
+    policy_results = run_policy_analysis(
+        biogeme_results=results['biogeme_results'],
+        df=results['data'],
+        config=results['config'],
+        output_dir=policy_dir,
+        model_type='ICLV',
+        verbose=True
+    )
+
+    # Generate LaTeX tables
+    latex_dir = model_dir / 'output' / 'latex'
+    latex_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n" + "=" * 70)
+    print("LATEX OUTPUT")
+    print("=" * 70)
+
+    generate_all_latex(
+        biogeme_results=results['biogeme_results'],
+        true_values=results['true_values'],
+        policy_results=policy_results,
+        output_dir=latex_dir,
+        model_name='ICLV'
+    )
+
+    print(f"\nPolicy analysis saved to: {policy_dir}")
+    print(f"LaTeX tables saved to: {latex_dir}")
 
 
 if __name__ == "__main__":

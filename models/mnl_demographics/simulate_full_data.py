@@ -11,12 +11,28 @@ True Parameters:
 Model:
     B_FEE_i = B_FEE + B_FEE_AGE*age_c + B_FEE_EDU*edu_c + B_FEE_INC*inc_c
     B_DUR_i = B_DUR + B_DUR_EDU*edu_c + B_DUR_INC*inc_c
+
+DESIGN NOTE - Asymmetric Interactions:
+    Fee sensitivity: affected by age, education, and income
+    Duration sensitivity: affected by education and income ONLY (no age effect)
+
+    Rationale: Age affects fee sensitivity (older individuals are less price-sensitive,
+    possibly due to accumulated wealth). However, duration/time sensitivity is driven
+    by opportunity cost, which correlates with education and income rather than age.
+    A young professional and an older professional with similar education/income would
+    value their time similarly, but the older person may be less price-sensitive.
 """
 
 import json
 import numpy as np
 import pandas as pd
+import sys
 from pathlib import Path
+
+# Add shared utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.sample_stats import generate_sample_stats
+from shared.cleanup import cleanup_simulation_outputs
 
 
 def softmax(utilities: np.ndarray) -> np.ndarray:
@@ -24,6 +40,17 @@ def softmax(utilities: np.ndarray) -> np.ndarray:
     u = utilities - np.max(utilities)
     exp_u = np.exp(u)
     return exp_u / exp_u.sum()
+
+
+def draw_gumbel_errors(rng: np.random.Generator, n: int) -> np.ndarray:
+    """
+    Draw Gumbel(0,1) errors for random utility model.
+
+    The Gumbel distribution: ε = -ln(-ln(U)) where U ~ Uniform(0,1).
+    This makes the RUM foundation explicit: U_ij = V_ij + ε_ij
+    """
+    u = rng.uniform(1e-10, 1 - 1e-10, size=n)
+    return -np.log(-np.log(u))
 
 
 def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
@@ -141,9 +168,12 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
 
             utilities = np.array(utilities)
 
-            # Compute choice probabilities and draw choice
-            probs = softmax(utilities)
-            choice_idx = rng.choice(len(alt_indices), p=probs)
+            # Add Gumbel errors to get total utilities (RUM: U = V + ε)
+            gumbel_errors = draw_gumbel_errors(rng, len(utilities))
+            total_utilities = utilities + gumbel_errors
+
+            # Choose alternative with highest total utility
+            choice_idx = np.argmax(total_utilities)
             choice = int(alt_indices[choice_idx])
 
             # Build record
@@ -198,7 +228,17 @@ def main():
     print("MNL Demographics - Data Simulation")
     print("=" * 60)
 
+    # Clean previous simulation outputs
+    cleanup_simulation_outputs(model_dir)
+
+    # Run simulation
     df = simulate(config_path, output_path)
+
+    # Generate sample statistics
+    with open(config_path) as f:
+        config = json.load(f)
+    stats_dir = model_dir / "sample_stats"
+    generate_sample_stats(df, config, stats_dir)
 
     print("\n" + "=" * 60)
     print("Simulation complete!")
