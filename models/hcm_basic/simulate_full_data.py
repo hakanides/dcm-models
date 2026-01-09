@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""
+Standalone Data Generator for HCM Basic Model
+DGP: Single latent variable (Blind Patriotism) interaction on fee sensitivity
+
+True Parameters:
+    ASC_paid = 5.0
+    B_FEE = -0.08, B_FEE_PatBlind = -0.10
+    B_DUR = -0.08
+
+Latent Variable Structure:
+    pat_blind = 0 + 0.20 * (age_idx - 2) + N(0,1)
+
+Measurement Model:
+    5 Likert items with loadings 0.85, 0.83, 0.81, 0.79, 0.78
+"""
+
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from scipy import stats
+
+
+def softmax(utilities: np.ndarray) -> np.ndarray:
+    """Compute choice probabilities using softmax."""
+    u = utilities - np.max(utilities)
+    exp_u = np.exp(u)
+    return exp_u / exp_u.sum()
+
+
+def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
+    """Sample from a categorical distribution."""
+    return rng.choice(spec['values'], p=spec['probs'])
+
+
+def generate_latent_variable(rng: np.random.Generator, demographics: dict,
+                              lv_config: dict) -> float:
+    """Generate latent variable from structural model."""
+    struct = lv_config['structural']
+
+    # Compute systematic component
+    lv = struct.get('intercept', 0.0)
+    centers = struct.get('center', {})
+
+    for demo_name, beta in struct.get('betas', {}).items():
+        demo_val = demographics[demo_name]
+        center = centers.get(demo_name, 0)
+        lv += beta * (demo_val - center)
+
+    # Add random component
+    sigma = struct.get('sigma', 1.0)
+    lv += rng.normal(0, sigma)
+
+    return lv
+
+
+def generate_likert_items(rng: np.random.Generator, lv_value: float,
+                          measurement_config: dict) -> dict:
+    """Generate Likert items from latent variable using ordered probit."""
+    items = measurement_config['items']
+    loadings = measurement_config['loadings']
+    thresholds = measurement_config['thresholds']
+
+    responses = {}
+    for item_name, loading in zip(items, loadings):
+        # Continuous latent response
+        y_star = loading * lv_value + rng.normal(0, 1)
+
+        # Convert to ordinal using thresholds
+        response = 1
+        for thresh in thresholds:
+            if y_star > thresh:
+                response += 1
+        responses[item_name] = min(response, 5)
+
+    return responses
+
+
+def get_attribute_value(scenario: pd.Series, alt_idx: str, attribute: str, fee_scale: float) -> float:
+    """Extract attribute value for an alternative from scenario."""
+    col_name = f"{attribute}{alt_idx}"
+    value = scenario[col_name]
+    if attribute == 'fee':
+        value = value / fee_scale
+    return float(value)
+
+
+def compute_utility(choice_cfg: dict, scenario: pd.Series, alt_idx: str, alt_info: dict,
+                    latent_values: dict) -> float:
+    """Compute utility with latent variable interactions."""
+    V = 0.0
+    fee_scale = choice_cfg.get('fee_scale', 10000.0)
+    alt_name = alt_info['name']
+
+    # Add ASC if applicable
+    for term in choice_cfg.get('base_terms', []):
+        if alt_name in term.get('apply_to', []):
+            V += term['coef']
+
+    # Add attribute effects with LV interactions
+    for term in choice_cfg.get('attribute_terms', []):
+        if alt_name not in term.get('apply_to', []):
+            continue
+
+        attr_value = get_attribute_value(scenario, alt_idx, term['attribute'], fee_scale)
+
+        # Compute coefficient with interactions
+        coef = term['base_coef']
+        for inter in term.get('interactions', []):
+            if inter.get('type') == 'latent':
+                lv_name = inter['with']
+                if lv_name in latent_values:
+                    coef += inter['coef'] * latent_values[lv_name]
+
+        V += coef * attr_value
+
+    return V
+
+
+def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.DataFrame:
+    """Main simulation function for HCM."""
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    pop_cfg = cfg['population']
+    N = pop_cfg['N']
+    T = pop_cfg['T']
+    seed = pop_cfg.get('seed', 42)
+
+    rng = np.random.default_rng(seed)
+
+    scenarios_path = Path(config_path).parent / cfg['design']['path']
+    scenarios = pd.read_csv(scenarios_path)
+    n_scenarios = len(scenarios)
+
+    if verbose:
+        print(f"Loaded {n_scenarios} scenarios from {scenarios_path}")
+        print(f"Simulating {N} individuals x {T} tasks = {N*T} observations")
+        print(f"True parameters: {cfg['model_info']['true_values']}")
+
+    alternatives = cfg['choice_model']['alternatives']
+    alt_indices = list(alternatives.keys())
+    latent_cfg = cfg.get('latent', {})
+
+    records = []
+    true_lv_values = []
+
+    for i in range(N):
+        # Draw demographics
+        agent_demographics = {}
+        for demo_name, demo_spec in cfg.get('demographics', {}).items():
+            agent_demographics[demo_name] = draw_categorical(rng, demo_spec)
+
+        # Generate latent variables
+        latent_values = {}
+        likert_responses = {}
+        for lv_name, lv_config in latent_cfg.items():
+            lv_value = generate_latent_variable(rng, agent_demographics, lv_config)
+            latent_values[lv_name] = lv_value
+
+            # Generate Likert items
+            items = generate_likert_items(rng, lv_value, lv_config['measurement'])
+            likert_responses.update(items)
+
+        # Store true LV for verification
+        true_lv_values.append({'ID': i, **latent_values})
+
+        # Simulate T choice tasks
+        for t in range(T):
+            scenario_idx = rng.integers(0, n_scenarios)
+            scenario = scenarios.iloc[scenario_idx]
+
+            utilities = []
+            for alt_idx in alt_indices:
+                alt_info = alternatives[alt_idx]
+                u = compute_utility(cfg['choice_model'], scenario, alt_idx, alt_info, latent_values)
+                utilities.append(u)
+
+            utilities = np.array(utilities)
+            probs = softmax(utilities)
+            choice_idx = rng.choice(len(alt_indices), p=probs)
+            choice = int(alt_indices[choice_idx])
+
+            record = {
+                'ID': i,
+                'task': t,
+                'CHOICE': choice,
+                'scenario_id': scenario['scenario_id'],
+                **agent_demographics,
+                **likert_responses,
+                **{col: scenario[col] for col in scenarios.columns}
+            }
+
+            fee_scale = cfg['choice_model']['fee_scale']
+            for alt_idx in alt_indices:
+                record[f'fee{alt_idx}_10k'] = scenario[f'fee{alt_idx}'] / fee_scale
+
+            records.append(record)
+
+    df = pd.DataFrame(records)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+    # Save true LV values for verification
+    lv_df = pd.DataFrame(true_lv_values)
+    lv_path = output_path.parent / "true_latent_values.csv"
+    lv_df.to_csv(lv_path, index=False)
+
+    if verbose:
+        print(f"\nSaved {len(df)} observations to {output_path}")
+        print(f"Choice distribution: {df['CHOICE'].value_counts().sort_index().to_dict()}")
+        print(f"\nTrue LV (pat_blind): mean={lv_df['pat_blind'].mean():.3f}, std={lv_df['pat_blind'].std():.3f}")
+
+        # Report Likert item statistics
+        items = list(latent_cfg.get('pat_blind', {}).get('measurement', {}).get('items', []))
+        if items:
+            print(f"\nLikert items ({items[0]}-{items[-1]}):")
+            for item in items[:3]:
+                print(f"  {item}: mean={df[item].mean():.2f}, std={df[item].std():.2f}")
+
+    return df
+
+
+def main():
+    model_dir = Path(__file__).parent
+    config_path = model_dir / "config.json"
+    output_path = model_dir / "data" / "simulated_data.csv"
+
+    print("=" * 60)
+    print("HCM Basic - Data Simulation")
+    print("=" * 60)
+
+    df = simulate(config_path, output_path)
+
+    print("\n" + "=" * 60)
+    print("Simulation complete!")
+    print("=" * 60)
+
+    return df
+
+
+if __name__ == "__main__":
+    main()

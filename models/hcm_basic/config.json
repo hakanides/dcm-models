@@ -1,0 +1,80 @@
+{
+  "model_info": {
+    "name": "HCM Basic",
+    "description": "Hybrid Choice Model with single latent variable (Blind Patriotism) on fee sensitivity",
+    "parameters": ["ASC_paid", "B_FEE", "B_FEE_PatBlind", "B_DUR"],
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_FEE_PatBlind": -0.10,
+      "B_DUR": -0.08
+    },
+    "note": "Two-stage estimation causes ~15-25% attenuation bias on LV effect"
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  },
+  "design": {
+    "path": "../../data/raw/scenarios_prepared.csv",
+    "sample_with_replacement": true
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4],
+      "probs": [0.1, 0.35, 0.3, 0.2, 0.05]
+    }
+  },
+  "latent": {
+    "pat_blind": {
+      "structural": {
+        "intercept": 0.0,
+        "betas": {
+          "age_idx": 0.20
+        },
+        "center": {"age_idx": 2.0},
+        "sigma": 1.0
+      },
+      "measurement": {
+        "items": ["pat_blind_1", "pat_blind_2", "pat_blind_3", "pat_blind_4", "pat_blind_5"],
+        "loadings": [0.85, 0.83, 0.81, 0.79, 0.78],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    }
+  },
+  "choice_model": {
+    "fee_scale": 10000.0,
+    "alternatives": {
+      "1": {"name": "paid1", "asc": true},
+      "2": {"name": "paid2", "asc": true},
+      "3": {"name": "standard", "asc": false}
+    },
+    "base_terms": [
+      {
+        "name": "ASC_paid",
+        "apply_to": ["paid1", "paid2"],
+        "coef": 5.0
+      }
+    ],
+    "attribute_terms": [
+      {
+        "name": "B_FEE",
+        "attribute": "fee",
+        "apply_to": ["paid1", "paid2"],
+        "base_coef": -0.08,
+        "interactions": [
+          {"with": "pat_blind", "coef": -0.10, "type": "latent"}
+        ]
+      },
+      {
+        "name": "B_DUR",
+        "attribute": "dur",
+        "apply_to": ["paid1", "paid2", "standard"],
+        "base_coef": -0.08,
+        "interactions": []
+      }
+    ]
+  }
+}

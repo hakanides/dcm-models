@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""
+MNL Basic - Isolated Model Validation
+=====================================
+
+This script runs the complete validation pipeline for MNL Basic:
+1. Generate simulated data with matching DGP (no interactions)
+2. Estimate the model
+3. Compare estimates to true parameters
+
+Expected result: Unbiased parameter recovery (<10% bias, 95% CI coverage)
+
+Usage:
+    python run.py
+    python run.py --n_individuals 1000 --n_tasks 10
+
+Author: DCM Research Team
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Run MNL Basic validation')
+    parser.add_argument('--n_individuals', type=int, default=None,
+                        help='Override N from config')
+    parser.add_argument('--n_tasks', type=int, default=None,
+                        help='Override T from config')
+    parser.add_argument('--skip_simulation', action='store_true',
+                        help='Skip simulation, use existing data')
+
+    args = parser.parse_args()
+
+    model_dir = Path(__file__).parent
+
+    print("=" * 70)
+    print("MNL BASIC - ISOLATED MODEL VALIDATION")
+    print("=" * 70)
+    print("\nThis validates that MNL Basic can recover true parameters")
+    print("when the DGP matches the model specification (no interactions).\n")
+
+    # Step 1: Generate data
+    if not args.skip_simulation:
+        print("-" * 70)
+        print("STEP 1: Generating simulated data")
+        print("-" * 70)
+        result = subprocess.run(
+            [sys.executable, str(model_dir / "simulate_full_data.py")],
+            cwd=str(model_dir),
+            capture_output=False
+        )
+        if result.returncode != 0:
+            print("ERROR: Simulation failed!")
+            sys.exit(1)
+    else:
+        print("-" * 70)
+        print("STEP 1: Skipped (using existing data)")
+        print("-" * 70)
+
+    # Step 2: Estimate model
+    print("\n" + "-" * 70)
+    print("STEP 2: Estimating model")
+    print("-" * 70)
+    result = subprocess.run(
+        [sys.executable, str(model_dir / "model.py")],
+        cwd=str(model_dir),
+        capture_output=False
+    )
+    if result.returncode != 0:
+        print("ERROR: Estimation failed!")
+        sys.exit(1)
+
+    # Summary
+    print("\n" + "=" * 70)
+    print("VALIDATION COMPLETE")
+    print("=" * 70)
+    print(f"\nResults saved to: {model_dir / 'results'}")
+    print(f"  - parameter_estimates.csv")
+    print(f"  - model_comparison.csv")
+    print(f"  - MNL_Basic.html (Biogeme output)")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,69 @@
+{
+  "model_info": {
+    "name": "MXL Basic",
+    "description": "Mixed Logit with random fee coefficient (unobserved heterogeneity)",
+    "parameters": ["ASC_paid", "B_FEE_MU", "B_FEE_SIGMA", "B_DUR"],
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE_MU": -0.08,
+      "B_FEE_SIGMA": 0.03,
+      "B_DUR": -0.08
+    }
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  },
+  "design": {
+    "path": "../../data/raw/scenarios_prepared.csv",
+    "sample_with_replacement": true
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4],
+      "probs": [0.1, 0.35, 0.3, 0.2, 0.05]
+    }
+  },
+  "random_coefficients": {
+    "B_FEE": {
+      "distribution": "normal",
+      "mean": -0.08,
+      "std": 0.03
+    }
+  },
+  "choice_model": {
+    "fee_scale": 10000.0,
+    "alternatives": {
+      "1": {"name": "paid1", "asc": true},
+      "2": {"name": "paid2", "asc": true},
+      "3": {"name": "standard", "asc": false}
+    },
+    "base_terms": [
+      {
+        "name": "ASC_paid",
+        "apply_to": ["paid1", "paid2"],
+        "coef": 5.0
+      }
+    ],
+    "attribute_terms": [
+      {
+        "name": "B_FEE",
+        "attribute": "fee",
+        "apply_to": ["paid1", "paid2"],
+        "base_coef": -0.08,
+        "random": true,
+        "interactions": []
+      },
+      {
+        "name": "B_DUR",
+        "attribute": "dur",
+        "apply_to": ["paid1", "paid2", "standard"],
+        "base_coef": -0.08,
+        "random": false,
+        "interactions": []
+      }
+    ]
+  }
+}

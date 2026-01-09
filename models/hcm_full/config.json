@@ -1,0 +1,141 @@
+{
+  "model_info": {
+    "name": "HCM Full",
+    "description": "Hybrid Choice Model with all 4 latent variables affecting fee and duration sensitivity",
+    "parameters": [
+      "ASC_paid", "B_FEE", "B_DUR",
+      "B_FEE_PatBlind", "B_FEE_PatConst", "B_FEE_SecDL", "B_FEE_SecFP",
+      "B_DUR_PatBlind", "B_DUR_PatConst", "B_DUR_SecDL", "B_DUR_SecFP"
+    ],
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_FEE_PatBlind": -0.10,
+      "B_FEE_PatConst": -0.04,
+      "B_FEE_SecDL": 0.05,
+      "B_FEE_SecFP": 0.04,
+      "B_DUR": -0.08,
+      "B_DUR_PatBlind": 0.06,
+      "B_DUR_PatConst": 0.04,
+      "B_DUR_SecDL": -0.05,
+      "B_DUR_SecFP": -0.04
+    },
+    "note": "Two-stage estimation causes attenuation bias on all LV effects"
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  },
+  "design": {
+    "path": "../../data/raw/scenarios_prepared.csv"
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4],
+      "probs": [0.1, 0.35, 0.3, 0.2, 0.05]
+    },
+    "edu_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5],
+      "probs": [0.02, 0.2, 0.15, 0.45, 0.15, 0.03]
+    },
+    "income_indiv_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3, 4, 5, 6, 7],
+      "probs": [0.2, 0.2, 0.18, 0.14, 0.1, 0.08, 0.06, 0.04]
+    }
+  },
+  "latent": {
+    "pat_blind": {
+      "structural": {
+        "intercept": 0.0,
+        "betas": {"age_idx": 0.20, "income_indiv_idx": -0.15},
+        "center": {"age_idx": 2.0, "income_indiv_idx": 3.0},
+        "sigma": 1.0
+      },
+      "measurement": {
+        "items": ["pat_blind_1", "pat_blind_2", "pat_blind_3", "pat_blind_4", "pat_blind_5"],
+        "loadings": [0.85, 0.83, 0.81, 0.79, 0.78],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    },
+    "pat_constructive": {
+      "structural": {
+        "intercept": 0.0,
+        "betas": {"edu_idx": 0.25},
+        "center": {"edu_idx": 3.0},
+        "sigma": 1.0
+      },
+      "measurement": {
+        "items": ["pat_const_1", "pat_const_2", "pat_const_3", "pat_const_4", "pat_const_5"],
+        "loadings": [0.82, 0.80, 0.79, 0.78, 0.77],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    },
+    "sec_dl": {
+      "structural": {
+        "intercept": 0.0,
+        "betas": {"edu_idx": 0.18, "income_indiv_idx": 0.12},
+        "center": {"edu_idx": 3.0, "income_indiv_idx": 3.0},
+        "sigma": 1.0
+      },
+      "measurement": {
+        "items": ["sec_dl_1", "sec_dl_2", "sec_dl_3", "sec_dl_4", "sec_dl_5"],
+        "loadings": [0.80, 0.79, 0.78, 0.77, 0.76],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    },
+    "sec_fp": {
+      "structural": {
+        "intercept": 0.0,
+        "betas": {"edu_idx": 0.20},
+        "center": {"edu_idx": 3.0},
+        "sigma": 1.0
+      },
+      "measurement": {
+        "items": ["sec_fp_1", "sec_fp_2", "sec_fp_3", "sec_fp_4", "sec_fp_5"],
+        "loadings": [0.78, 0.76, 0.74, 0.72, 0.70],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    }
+  },
+  "choice_model": {
+    "fee_scale": 10000.0,
+    "alternatives": {
+      "1": {"name": "paid1", "asc": true},
+      "2": {"name": "paid2", "asc": true},
+      "3": {"name": "standard", "asc": false}
+    },
+    "base_terms": [
+      {"name": "ASC_paid", "apply_to": ["paid1", "paid2"], "coef": 5.0}
+    ],
+    "attribute_terms": [
+      {
+        "name": "B_FEE",
+        "attribute": "fee",
+        "apply_to": ["paid1", "paid2"],
+        "base_coef": -0.08,
+        "interactions": [
+          {"with": "pat_blind", "coef": -0.10, "type": "latent"},
+          {"with": "pat_constructive", "coef": -0.04, "type": "latent"},
+          {"with": "sec_dl", "coef": 0.05, "type": "latent"},
+          {"with": "sec_fp", "coef": 0.04, "type": "latent"}
+        ]
+      },
+      {
+        "name": "B_DUR",
+        "attribute": "dur",
+        "apply_to": ["paid1", "paid2", "standard"],
+        "base_coef": -0.08,
+        "interactions": [
+          {"with": "pat_blind", "coef": 0.06, "type": "latent"},
+          {"with": "pat_constructive", "coef": 0.04, "type": "latent"},
+          {"with": "sec_dl", "coef": -0.05, "type": "latent"},
+          {"with": "sec_fp", "coef": -0.04, "type": "latent"}
+        ]
+      }
+    ]
+  }
+}
