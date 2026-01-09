@@ -1,677 +1,937 @@
-# Methodological Notes
+# Methodology
 
-This document describes important methodological considerations for the DCM estimation framework.
+**Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk**
+
+This document provides comprehensive methodological documentation for the DCM estimation framework, covering the theoretical foundations, estimation procedures, and validation approaches.
 
 ---
 
 ## Table of Contents
 
-1. [Measurement Error in HCM](#measurement-error-in-hybrid-choice-models-hcm)
-2. [ICLV: Integrated Choice and Latent Variable Models](#iclv-integrated-choice-and-latent-variable-models)
-3. [Enhanced ICLV Features](#enhanced-iclv-features)
-4. [Fee Scaling](#fee-scaling)
-5. [Panel Data Structure](#panel-data-structure)
-6. [Parameter Bounds](#parameter-bounds)
-7. [Model Selection](#model-selection)
-8. [Random Coefficient Sign Enforcement](#random-coefficient-sign-enforcement)
+1. [Random Utility Model (RUM) Framework](#1-random-utility-model-rum-framework)
+2. [Model Hierarchy](#2-model-hierarchy)
+3. [Data Generating Process (DGP)](#3-data-generating-process-dgp)
+4. [Measurement Model](#4-measurement-model)
+5. [Two-Stage vs Simultaneous Estimation](#5-two-stage-vs-simultaneous-estimation)
+6. [Policy Analysis Methodology](#6-policy-analysis-methodology)
+7. [Configuration System](#7-configuration-system)
+8. [Isolated Model Validation Workflow](#8-isolated-model-validation-workflow)
+9. [Extended Model Specifications](#9-extended-model-specifications)
+10. [Validation Metrics](#10-validation-metrics)
+11. [LaTeX Output Format](#11-latex-output-format)
+12. [References](#12-references)
 
 ---
 
-## Measurement Error in Hybrid Choice Models (HCM)
+## 1. Random Utility Model (RUM) Framework
 
-### The Problem
+### 1.1 Mathematical Foundation
 
-This implementation uses a **two-stage approach** for HCM estimation:
-
-1. **Stage 1**: Estimate latent variables from Likert items using CFA/weighted averages
-2. **Stage 2**: Use estimated LVs as fixed regressors in the choice model
-
-This approach treats estimated latent variables as **error-free**, which causes **attenuation bias**: LV effect estimates are systematically biased toward zero.
-
-### Why Does This Happen?
-
-When we use estimated LV scores instead of true LV values:
+The Random Utility Model forms the theoretical basis for all discrete choice models in this framework. For individual n choosing among J alternatives:
 
 ```
-True model:     U = b0 + b1 x LV_true + e
-Estimated:      U = b0 + b1 x LV_est + e
+U_nj = V_nj + ε_nj
+```
+
+Where:
+- `U_nj` = total (unobserved) utility of alternative j for individual n
+- `V_nj` = systematic (observed) utility component
+- `ε_nj` = random (unobserved) error term
+
+### 1.2 Choice Rule
+
+Individual n chooses alternative j if and only if:
+
+```
+U_nj > U_nk  for all k ≠ j
+```
+
+The choice probability is:
+
+```
+P_nj = Pr(V_nj + ε_nj > V_nk + ε_nk  for all k ≠ j)
+```
+
+### 1.3 Gumbel Distribution and Logit Probabilities
+
+When errors follow the Type I Extreme Value (Gumbel) distribution:
+
+```
+F(ε) = exp(-exp(-ε))
+```
+
+This yields the closed-form multinomial logit probability:
+
+```
+P_nj = exp(V_nj) / Σ_k exp(V_nk)
+```
+
+### 1.4 Gumbel Error Generation in DGP
+
+The simulation code generates Gumbel errors using the inverse transform method:
+
+```python
+def draw_gumbel_errors(rng, n):
+    """Generate Gumbel-distributed errors using inverse CDF method."""
+    u = rng.uniform(1e-10, 1-1e-10, size=n)
+    return -np.log(-np.log(u))
+```
+
+**Why this works:**
+- If U ~ Uniform(0,1), then -ln(-ln(U)) ~ Gumbel(0,1)
+- The bounds (1e-10, 1-1e-10) prevent numerical overflow at extremes
+- This is the standard inverse CDF transformation for Gumbel distribution
+
+### 1.5 Systematic Utility Specification
+
+In this framework, the systematic utility is linear in parameters:
+
+```
+V_nj = ASC_j + Σ_a β_a × x_nj,a + Σ_m β_LV,m × η_nm
+```
+
+Where:
+- `ASC_j` = alternative-specific constant (normalized: ASC_free = 0)
+- `β_a` = coefficient for attribute a
+- `x_nj,a` = value of attribute a for alternative j faced by individual n
+- `β_LV,m` = coefficient for latent variable m
+- `η_nm` = value of latent variable m for individual n
+
+---
+
+## 2. Model Hierarchy
+
+The framework implements a progression of models from simple to complex:
+
+### 2.1 Model Comparison Table
+
+| Model | Parameters | Heterogeneity Type | Estimation | LV Bias |
+|-------|------------|-------------------|------------|---------|
+| MNL Basic | 3 | None (homogeneous) | MLE | N/A |
+| MNL Demographics | 8 | Observable (demographics) | MLE | N/A |
+| MXL Basic | 4-6 | Unobserved (random β) | SML | N/A |
+| HCM Basic | 5-8 | Latent variables | Two-stage | 15-30% |
+| HCM Full | 13+ | 4 latent variables | Two-stage | 15-30% |
+| ICLV | 10-30 | Latent variables | Simultaneous SML | ~0% |
+
+### 2.2 MNL Basic
+
+The simplest model with fixed coefficients:
+
+```
+V_paid = ASC_paid + B_FEE × fee + B_DUR × duration
+V_free = 0  (normalized)
+```
+
+**Parameters**: ASC_paid, B_FEE, B_DUR
+
+### 2.3 MNL with Demographics
+
+Extends MNL by allowing demographic-specific effects:
+
+```
+V_paid = ASC_paid + (B_FEE + B_FEE_AGE × age) × fee
+                  + (B_DUR + B_DUR_EDU × edu) × duration
+```
+
+**Captures**: Observable heterogeneity through demographic interactions
+
+### 2.4 Mixed Logit (MXL)
+
+Allows coefficients to vary across individuals:
+
+```
+β_n,FEE ~ N(μ_FEE, σ²_FEE)
+```
+
+**Captures**: Unobserved preference heterogeneity
+
+**Estimation**: Simulated Maximum Likelihood with Halton draws
+
+### 2.5 Hybrid Choice Model (HCM)
+
+Incorporates latent psychological constructs:
+
+```
+V_paid = ASC_paid + B_FEE × fee + B_FEE_LV × η_patblind × fee + B_DUR × duration
+```
+
+Where `η_patblind` is the latent "Patriotism/Blind Trust" variable
+
+**Problem**: Two-stage estimation causes attenuation bias (see Section 5)
+
+### 2.6 ICLV (Integrated Choice and Latent Variable)
+
+Simultaneously estimates measurement, structural, and choice models:
+
+```
+Joint likelihood: L_n = ∫ P(choice|η) × P(indicators|η) × f(η) dη
+```
+
+**Advantage**: Unbiased latent variable coefficient estimates
+
+---
+
+## 3. Data Generating Process (DGP)
+
+### 3.1 Workflow Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 1: CONFIGURE                                                  │
+│  config.json → Define TRUE parameter values                         │
+│  • Population size (N individuals, T choice tasks)                  │
+│  • True coefficients (ASC, B_FEE, B_DUR, etc.)                     │
+│  • Demographics distribution                                        │
+│  • Latent variables (for HCM/ICLV)                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 2: SIMULATE                                                   │
+│  simulate_full_data.py → Generate synthetic data                    │
+│  • Draw demographics from configured distributions                  │
+│  • Compute utilities using TRUE parameters                          │
+│  • Simulate choices using Random Utility Model                      │
+│  • Output: data/simulated_data.csv                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 3: ESTIMATE                                                   │
+│  model.py → Recover parameters using Biogeme                        │
+│  • Load simulated data                                              │
+│  • Estimate model (MLE optimization)                                │
+│  • Compare estimates to TRUE values                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 4: OUTPUT                                                     │
+│  Saved to multiple locations:                                       │
+│  • results/parameter_comparison.csv   (estimates vs true)           │
+│  • results/estimation_results.csv     (full Biogeme output)         │
+│  • output/latex/                      (publication tables)          │
+│  • policy_analysis/                   (WTP, elasticities)           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 Demographics Generation
+
+Demographics are drawn from categorical distributions specified in config:
+
+```python
+# From config.json
+"demographics": {
+    "age_idx": {
+        "type": "categorical",
+        "values": [0, 1, 2, 3],
+        "probabilities": [0.15, 0.35, 0.30, 0.20]
+    },
+    "edu_idx": {
+        "type": "categorical",
+        "values": [0, 1, 2],
+        "probabilities": [0.30, 0.45, 0.25]
+    }
+}
+```
+
+### 3.3 Latent Variable Generation
+
+Latent variables are generated from a structural model:
+
+```
+η_m = Γ_m0 + Σ_p Γ_mp × X_p + ζ_m
+```
+
+Where:
+- `Γ_m0` = intercept (often 0 for centering)
+- `Γ_mp` = effect of demographic p on latent m
+- `ζ_m ~ N(0, σ²_m)` = residual variance
+
+**Implementation** (from `simulate_full_data.py`):
+
+```python
+# Structural equation for latent variable
+lv_true = (
+    config['latent']['intercept'] +
+    config['latent']['betas']['age_idx'] * (age_idx - age_center) +
+    config['latent']['betas']['edu_idx'] * (edu_idx - edu_center) +
+    rng.normal(0, config['latent']['sigma'], n_individuals)
+)
+```
+
+**Note**: Demographics are centered (e.g., `age_idx - 1.55`) to improve interpretation and reduce collinearity.
+
+### 3.4 Likert Response Generation
+
+Likert items are generated using the ordered probit model:
+
+```python
+def generate_likert_responses(lv_values, loadings, thresholds, rng):
+    """Generate ordinal Likert responses from latent variables."""
+    responses = {}
+    for item, loading in loadings.items():
+        # Latent continuous response
+        y_star = loading * lv_values + rng.normal(0, 1, len(lv_values))
+
+        # Map to ordinal categories using thresholds
+        response = np.ones(len(lv_values), dtype=int)  # Start at 1
+        for j, tau in enumerate(thresholds):
+            response += (y_star > tau).astype(int)
+
+        responses[item] = response
+
+    return responses
+```
+
+**Standard thresholds**: `[-1.0, -0.35, 0.35, 1.0]` for 5-point Likert scale
+
+### 3.5 Choice Generation
+
+Choices are simulated using the Random Utility Model:
+
+```python
+def simulate_choice(V_alternatives, rng):
+    """Simulate choice using RUM with Gumbel errors."""
+    n_obs = V_alternatives.shape[0]
+    n_alts = V_alternatives.shape[1]
+
+    # Draw Gumbel errors
+    gumbel_errors = draw_gumbel_errors(rng, (n_obs, n_alts))
+
+    # Total utility
+    U = V_alternatives + gumbel_errors
+
+    # Choice is alternative with maximum utility
+    choice = np.argmax(U, axis=1) + 1  # +1 for 1-indexing
+
+    return choice
+```
+
+---
+
+## 4. Measurement Model
+
+### 4.1 Ordered Probit Specification
+
+Likert items are modeled as ordinal manifestations of underlying latent variables:
+
+```
+y*_k = λ_k × η + ε_k,  where ε_k ~ N(0,1)
+y_k = j  if  τ_{j-1} < y*_k ≤ τ_j
+```
+
+Where:
+- `y*_k` = latent continuous response for item k
+- `λ_k` = factor loading (item sensitivity to construct)
+- `η` = latent variable value
+- `τ_j` = threshold parameters (cutpoints)
+- `y_k` = observed ordinal response (1, 2, 3, 4, 5)
+
+### 4.2 Choice Probability for Ordinal Response
+
+```
+P(y_k = j | η) = Φ(τ_j - λ_k × η) - Φ(τ_{j-1} - λ_k × η)
+```
+
+Where `Φ()` is the standard normal CDF.
+
+### 4.3 Delta Parameterization for Threshold Ordering
+
+**Problem**: Thresholds must be strictly ordered: τ_1 < τ_2 < τ_3 < τ_4
+
+**Solution**: Use delta parameterization to guarantee ordering:
+
+```python
+# In ICLV estimation code
+tau_1 = Beta('tau_1', -1.0, -3, 3, 0)
+delta_2 = Beta('delta_2', 0.6, -3, 3, 0)
+delta_3 = Beta('delta_3', 0.6, -3, 3, 0)
+delta_4 = Beta('delta_4', 0.6, -3, 3, 0)
+
+# Thresholds with guaranteed ordering
+tau_2 = tau_1 + exp(delta_2)  # tau_2 > tau_1 always
+tau_3 = tau_2 + exp(delta_3)  # tau_3 > tau_2 always
+tau_4 = tau_3 + exp(delta_4)  # tau_4 > tau_3 always
+```
+
+**Why this works**: `exp(x) > 0` for all x, so each threshold is strictly greater than the previous.
+
+### 4.4 Scale Identification
+
+The measurement model requires scale normalization:
+
+**Option 1**: Fix first loading to 1
+```
+λ_1 = 1 (fixed)
+λ_2, λ_3, ... estimated freely
+```
+
+**Option 2**: Fix latent variance to 1
+```
+Var(η) = 1 (fixed)
+All loadings estimated freely
+```
+
+This framework uses Option 1 for interpretability.
+
+### 4.5 Reliability Assessment
+
+**Cronbach's Alpha**:
+```
+α = (k/(k-1)) × (1 - Σ Var(y_k) / Var(Σ y_k))
+```
+
+**Interpretation**:
+- α > 0.90: Excellent reliability
+- α > 0.80: Good reliability
+- α > 0.70: Acceptable reliability
+- α < 0.70: Poor reliability (consider revising scale)
+
+---
+
+## 5. Two-Stage vs Simultaneous Estimation
+
+### 5.1 Two-Stage HCM (Causes Attenuation Bias)
+
+**Stage 1**: Estimate latent variable scores from Likert items
+```python
+# Factor analysis or weighted average
+lv_score = weighted_mean(likert_items, loadings)
+```
+
+**Stage 2**: Use LV scores as fixed regressors in choice model
+```
+V = ASC + B_FEE × fee + B_LV × lv_score + ...
+```
+
+**Problem**: This treats `lv_score` as error-free, ignoring measurement error.
+
+### 5.2 Attenuation Bias Formula
+
+When using estimated LV scores instead of true values:
+
+```
+True model:     U = β_0 + β_LV × LV_true + ε
+Estimated:      U = β_0 + β_LV × LV_est + ε
 
 Where: LV_est = LV_true + measurement_error
 ```
 
-The measurement error in `LV_est` attenuates the coefficient `b1`:
+The OLS estimator for β_LV is attenuated:
 
 ```
-E[b1_hat] = b1 x reliability
-```
-
-Where `reliability = Var(LV_true) / Var(LV_est) < 1`
-
-### Bias Magnitude
-
-The attenuation depends on:
-
-| Factor | Effect on Bias |
-|--------|---------------|
-| Number of Likert items | More items -> higher reliability -> less bias |
-| Item loadings | Higher loadings -> higher reliability -> less bias |
-| True effect size | Smaller effects more affected (proportionally) |
-| Sample size | Does NOT fix bias, only improves precision |
-
-**Typical reliability** for 4-5 item Likert scales: 0.70-0.85
-
-**Expected attenuation**: LV coefficients underestimated by 15-30%
-
-### Interpretation Guidelines
-
-1. **If LV effects are significant**: They are likely truly significant (conservative test)
-2. **If LV effects are NOT significant**: They may still exist (attenuated)
-3. **Effect magnitudes**: Underestimated; use for relative comparisons only
-4. **Sign and direction**: Generally preserved despite attenuation
-
-### Alternative: Full ICLV Estimation
-
-For unbiased estimates, use Integrated Choice and Latent Variable (ICLV) models with **simultaneous estimation**:
-
-- Measurement model: Likert items -> Latent variables
-- Structural model: Demographics -> Latent variables
-- Choice model: LVs + attributes -> Utility
-
-### References
-
-- Walker, J., & Ben-Akiva, M. (2002). Generalized random utility model. Mathematical Social Sciences.
-- Vij, A., & Walker, J. (2016). How, when and why integrated choice and latent variable models are latently useful. Transportation Research Part B.
-
----
-
-## ICLV: Integrated Choice and Latent Variable Models
-
-### Overview
-
-The ICLV framework provides **unbiased estimates** by simultaneously estimating:
-1. **Measurement Model**: Likert items -> Latent variables
-2. **Structural Model**: Demographics -> Latent variables
-3. **Choice Model**: Attributes + LVs -> Utility
-
-### Mathematical Formulation
-
-The integrated likelihood for individual n is:
-
-```
-L_n = integral P(y_n|eta) x P(I_n|eta) x f(eta|X_n) d_eta
+E[β̂_LV] = β_LV × reliability
 ```
 
 Where:
-- `y_n` = choice outcome
-- `I_n` = Likert indicator responses
-- `eta` = latent variable vector
-- `X_n` = demographic covariates
-- `f(eta|X_n)` = conditional distribution of LVs given demographics
+```
+reliability = Var(LV_true) / Var(LV_est) = Var(LV_true) / (Var(LV_true) + Var(error)) < 1
+```
 
-### Simulated Maximum Likelihood (SML)
+### 5.3 Bias Magnitude
 
-Since the integral is analytically intractable, we use Monte Carlo simulation:
+| Factor | Effect on Bias |
+|--------|---------------|
+| Number of Likert items | More items → higher reliability → less bias |
+| Factor loadings | Higher loadings → higher reliability → less bias |
+| True effect size | Smaller effects more affected (proportionally) |
+| Sample size | Does NOT fix bias (only improves precision) |
+
+**Typical reliability** for 4-5 item Likert scales: 0.70-0.85
+
+**Expected attenuation**: LV coefficients underestimated by **15-30%**
+
+### 5.4 ICLV: Simultaneous Estimation (Unbiased)
+
+ICLV integrates over the latent variable distribution in the likelihood:
 
 ```
-L_hat_n = (1/R) sum_r [ P(y_n|eta_r) x prod_k P(I_nk|eta_r) ]
+L_n = ∫ P(y_n | η) × Π_k P(I_nk | η) × f(η | X_n) dη
+```
+
+**Monte Carlo Integration**:
+```
+L̂_n = (1/R) Σ_r [ P(y_n | η_r) × Π_k P(I_nk | η_r) ]
 ```
 
 Where:
 - `R` = number of simulation draws (typically 500-1000)
-- `eta_r` = draw r from the latent variable distribution
+- `η_r` = draw r from the latent variable distribution
 - Halton sequences provide more efficient coverage than pseudo-random draws
 
-### Model Components
-
-**1. Measurement Model (Ordered Probit)**
-
-For each Likert item k with J response categories:
-
-```
-P(I_k = j | eta) = Phi(tau_j - lambda_k x eta) - Phi(tau_{j-1} - lambda_k x eta)
-```
-
-Where:
-- `lambda_k` = factor loading for item k
-- `tau_j` = threshold parameters
-- `Phi()` = standard normal CDF
-
-**2. Structural Model**
-
-Latent variables depend on demographics:
-
-```
-eta_m = gamma_m0 + sum_p gamma_mp x X_p + zeta_m
-```
-
-Where:
-- `gamma_mp` = effect of demographic p on latent m
-- `zeta_m ~ N(0, sigma^2_m)` = residual variance
-
-**3. Choice Model**
-
-Utility includes latent variable effects:
-
-```
-V_j = ASC_j + sum_a beta_a x attr_aj + sum_m beta_{LV,m} x eta_m
-```
-
-### Comparison: Two-Stage vs ICLV
+### 5.5 Comparison Table
 
 | Aspect | Two-Stage HCM | ICLV |
 |--------|---------------|------|
-| **Bias** | Attenuated (15-30%) | Unbiased |
+| **LV Coefficient Bias** | Attenuated 15-30% | Unbiased |
 | **Standard Errors** | Underestimated | Correct |
-| **Computation** | Fast | Slow (simulation) |
+| **Computational Time** | Fast (~seconds) | Slow (~minutes) |
 | **Implementation** | Simple | Complex |
-| **Software** | Any | Specialized |
+| **When to Use** | Exploratory analysis | Final publication |
 
-### When to Use ICLV
+### 5.6 Empirical Validation
 
-**Use ICLV when:**
-- Unbiased effect magnitudes are important
-- Comparing LV effects across models/studies
-- Publication requires correct standard errors
-- Measurement quality is moderate (alpha < 0.80)
+From the framework's simulation studies:
 
-**Two-stage HCM is acceptable when:**
-- Testing significance (conservative)
-- Measurement quality is high (alpha > 0.85)
-- Computational resources are limited
-- Exploratory analysis
-
-### Implementation in This Framework
-
-The ICLV module (`src/models/iclv/`) provides:
-
-```python
-from src.models.iclv import estimate_iclv
-
-result = estimate_iclv(
-    df=data,
-    constructs={'pat_blind': ['pb1', 'pb2', 'pb3', 'pb4']},
-    covariates=['age_idx', 'edu_idx'],
-    choice_col='CHOICE',
-    attribute_cols=['fee1_10k', 'dur1'],
-    lv_effects={'pat_blind': 'B_FEE_PatBlind'},
-    n_draws=500
-)
-```
-
-### Identification Requirements
-
-ICLV models require:
-1. **At least 3 indicators per construct** (for measurement model)
-2. **At least 1 covariate per LV** (for structural identification)
-3. **Scale normalization** (fix one loading per construct or fix variance)
-4. **Sufficient sample size** (N > 300 typically)
-
-### References
-
-- Ben-Akiva, M., et al. (2002). Hybrid Choice Models: Progress and Challenges. Marketing Letters.
-- Vij, A., & Walker, J. (2016). How, when and why integrated choice and latent variable models are latently useful. Transportation Research Part B.
-- Daly, A., et al. (2012). A synthesis of analytical results on integration of latent variables in choice models. Transportation.
+| Parameter | True | HCM (Two-Stage) | ICLV | HCM Bias | ICLV Bias |
+|-----------|------|-----------------|------|----------|-----------|
+| B_FEE_PatBlind | -0.10 | -0.067 | -0.097 | -33% | -3% |
+| B_FEE_SecDL | -0.08 | -0.052 | -0.078 | -35% | -2.5% |
 
 ---
 
-## Enhanced ICLV Features
+## 6. Policy Analysis Methodology
 
-The ICLV module includes seven major enhancements for publication-quality estimation:
+### 6.1 Willingness-to-Pay (WTP)
 
-### 1. Auto-Scaling
+**Definition**: The monetary amount an individual is willing to pay to obtain one unit improvement in an attribute.
 
-**Problem**: Large fee values (e.g., 5 million TL) cause numerical instability.
+**Formula**:
+```
+WTP_attribute = -β_attribute / β_fee × fee_scale
+```
 
-**Solution**: Automatic detection and scaling of large-valued attributes:
+**Example**:
+```
+WTP_duration = -B_DUR / B_FEE × 10,000
+             = -(-0.08) / (-0.008) × 10,000
+             = -10 × 10,000 = -100,000 TL per month
 
+Interpretation: Respondents require 100,000 TL compensation to accept
+one additional month of processing time.
+```
+
+### 6.2 WTP Standard Error (Delta Method)
+
+For WTP = -β_num / β_den × scale, the variance is:
+
+```
+Var(WTP) ≈ (∂WTP/∂β_num)² × Var(β_num)
+         + (∂WTP/∂β_den)² × Var(β_den)
+         + 2 × (∂WTP/∂β_num)(∂WTP/∂β_den) × Cov(β_num, β_den)
+```
+
+**Partial derivatives**:
+```
+∂WTP/∂β_num = -1/β_den × scale
+∂WTP/∂β_den = β_num/β_den² × scale
+```
+
+**Implementation** (from `policy_tools.py`):
 ```python
-result = estimate_iclv(df, ..., auto_scale=True)
+def calculate_wtp_with_se(beta_num, beta_den, cov_matrix, scale=10000):
+    """Calculate WTP with standard error using delta method."""
+    wtp = -beta_num / beta_den * scale
+
+    # Gradient vector
+    grad = np.array([
+        -1/beta_den * scale,           # d(WTP)/d(beta_num)
+        beta_num/beta_den**2 * scale   # d(WTP)/d(beta_den)
+    ])
+
+    # Variance via delta method
+    var_wtp = grad @ cov_matrix @ grad
+    se_wtp = np.sqrt(var_wtp)
+
+    return wtp, se_wtp
 ```
 
-The module:
-- Detects if max(|fee|) > 1000
-- Computes optimal scale factor (nearest power of 10)
-- Scales attributes before estimation
-- Reports original-scale coefficients
+### 6.3 WTP Distribution for MXL
 
-### 2. Two-Stage Starting Values
+When coefficients are random:
+```
+β_fee,i ~ N(μ_fee, σ²_fee)
+β_dur,i ~ N(μ_dur, σ²_dur)
 
-**Problem**: Poor starting values lead to local optima or non-convergence.
-
-**Solution**: Initialize from two-stage estimates:
-
-```python
-result = estimate_iclv(df, ..., use_two_stage_start=True)
+WTP_i = -β_dur,i / β_fee,i × fee_scale
 ```
 
-Process:
-1. Run factor analysis on Likert items -> LV scores
-2. Run logit with LV scores -> choice coefficients
-3. Use as starting values for ICLV
+**Reporting**: Mean, median, std, percentiles (5th, 25th, 50th, 75th, 95th)
 
-### 3. Panel Data Support
+**Note**: If β_fee can be positive for some individuals, WTP has undefined moments. Use lognormal distribution for fee coefficient to ensure negative sign.
 
-**Problem**: Standard errors underestimated when ignoring within-individual correlation.
+### 6.4 Own-Price Elasticity
 
-**Solution**: Panel-aware estimation:
+**Definition**: Percentage change in choice probability for alternative j given 1% change in own attribute.
 
-```python
-result = estimate_iclv(df, ..., use_panel=True)
+**Formula**:
+```
+η_jj = β_j × x_j × (1 - P_j)
 ```
 
-Implementation:
-- Groups observations by individual ID
-- Uses same draws across choice tasks for each individual
-- Computes cluster-robust standard errors
-
-### 4. Robust Standard Errors
-
-**Problem**: Standard errors rely on correct model specification.
-
-**Solution**: Sandwich (Huber-White) estimator:
-
-```python
-result = estimate_iclv(df, ..., compute_robust_se=True)
+**Point elasticity for fee**:
+```
+ε_own = B_FEE × fee × (1 - P_paid)
 ```
 
-Formula:
+### 6.5 Cross-Price Elasticity
+
+**Definition**: Percentage change in choice probability for alternative j given 1% change in attribute of alternative k.
+
+**Formula** (for IIA logit):
 ```
-V_robust = H^{-1} (sum_i g_i g_i') H^{-1}
+η_jk = -β × x_k × P_k  (for j ≠ k)
+```
+
+### 6.6 Arc Elasticity (Discrete Change)
+
+For larger changes (±10%, ±20%):
+
+```
+ε_arc = (P_new - P_baseline) / P_baseline × 100 / % change in attribute
+```
+
+**Bootstrap standard errors**: 1000 replicates for confidence intervals
+
+### 6.7 Compensating Variation (Consumer Surplus)
+
+**Definition**: Monetary equivalent of utility change from policy.
+
+**Formula**:
+```
+CV = -(1/β_fee) × [log-sum(new) - log-sum(baseline)] × fee_scale
 ```
 
 Where:
-- `H` = Hessian (expected information)
-- `g_i` = score contribution from individual i
-
-### 5. LV Correlation Estimation
-
-**Problem**: Assuming uncorrelated LVs may be unrealistic.
-
-**Solution**: Estimate LV correlations:
-
-```python
-result = estimate_iclv(df, ..., estimate_lv_correlation=True)
+```
+log-sum = ln(Σ_j exp(V_j))
 ```
 
-Reports correlation matrix between constructs, useful for:
-- Model diagnostics
-- Understanding LV relationships
-- Identifying potential multicollinearity
+**Interpretation**: Positive CV means policy improves welfare; negative means harm.
 
-### 6. Analytical Gradients
+### 6.8 Scenario Analysis
 
-**Problem**: Numerical gradients are slow and less accurate.
+**Default scenarios**:
+- Fee changes: ±10%, ±20%
+- Duration changes: ±5 days, ±10 days
+- Combined scenarios
 
-**Solution**: Implemented analytical gradients for ordered probit measurement model:
+**Output includes**:
+- Market share predictions
+- Choice probability changes
+- Revenue implications (if applicable)
 
-```python
-# In measurement.py
-gradient_loading()   # d log P / d lambda
-gradient_threshold() # d log P / d tau
-gradient_lv()        # d log P / d eta
+---
+
+## 7. Configuration System
+
+### 7.1 config.json Structure
+
+```json
+{
+  "model_info": {
+    "name": "MNL Basic",
+    "description": "Baseline multinomial logit",
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_DUR": -0.08
+    }
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2, 3],
+      "probabilities": [0.15, 0.35, 0.30, 0.20],
+      "centering": 1.55
+    },
+    "edu_idx": {
+      "type": "categorical",
+      "values": [0, 1, 2],
+      "probabilities": [0.30, 0.45, 0.25],
+      "centering": 0.95
+    }
+  },
+  "latent": {
+    "pat_blind": {
+      "structural": {
+        "intercept": 0,
+        "sigma": 1.0,
+        "betas": {
+          "age_idx": 0.20,
+          "edu_idx": -0.15
+        }
+      },
+      "measurement": {
+        "items": ["pat_blind_1", "pat_blind_2", "pat_blind_3", "pat_blind_4"],
+        "loadings": [1.0, 0.85, 0.78, 0.72],
+        "thresholds": [-1.0, -0.35, 0.35, 1.0]
+      }
+    }
+  },
+  "choice_model": {
+    "fee_scale": 10000,
+    "alternatives": ["free", "paid"],
+    "attributes": {
+      "fee": {"min": 0, "max": 5600000},
+      "duration": {"min": 30, "max": 180}
+    },
+    "parameters": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_DUR": -0.08
+    },
+    "lv_effects": {
+      "B_FEE_PatBlind": -0.10
+    }
+  }
+}
 ```
 
-Benefits:
-- 2-3x faster estimation
-- Better convergence properties
-- More accurate standard errors
+### 7.2 Critical Parameters
 
-### 7. Comparison Tools
+| Parameter | Purpose | Typical Value |
+|-----------|---------|---------------|
+| `fee_scale` | Scale fee for numerical stability | 10000 |
+| `centering` | Center demographics for interpretation | Mean of distribution |
+| `seed` | Reproducibility | 42 |
+| `N` | Sample size | 500-2000 |
+| `T` | Choice tasks per individual | 8-12 |
 
-**Problem**: Difficult to quantify attenuation bias.
+### 7.3 Sign Enforcement
 
-**Solution**: Built-in comparison functions:
+Coefficients can be constrained to economically sensible signs:
 
-```python
-from src.models.iclv import compare_two_stage_vs_iclv, summarize_attenuation_bias
-
-comparison = compare_two_stage_vs_iclv(hcm_results, iclv_result, true_values)
-summary = summarize_attenuation_bias(comparison)
-
-print(f"Mean attenuation: {summary['mean_attenuation_%']:.1f}%")
-print(f"ICLV RMSE improvement: {summary['rmse_improvement_%']:.1f}%")
-```
-
-### Configuration Options
-
-Full configuration via `EstimationConfig`:
-
-```python
-from src.models.iclv import EstimationConfig
-
-config = EstimationConfig(
-    n_draws=500,
-    draw_type='halton',
-    optimizer='BFGS',
-    max_iter=1000,
-    auto_scale=True,
-    use_two_stage_start=True,
-    use_panel=True,
-    compute_robust_se=True,
-    estimate_lv_correlation=True
-)
-
-result = estimate_iclv(df, ..., config=config)
+```json
+"sign_constraints": {
+  "B_FEE": "negative",
+  "B_DUR": "negative",
+  "ASC_paid": "none"
+}
 ```
 
 ---
 
-## Fee Scaling
+## 8. Isolated Model Validation Workflow
 
-### Standard: `fee_scale = 10,000`
+### 8.1 Purpose
 
-All fees are divided by 10,000 before estimation:
+Each model folder (`models/mnl_basic`, `models/mxl_basic`, etc.) contains a self-contained validation system where:
 
-```python
-fee_scaled = fee_raw / 10000.0
+1. **True parameters** are specified in `config.json`
+2. **Data is simulated** using the exact DGP matching the model specification
+3. **Parameters are estimated** using Biogeme
+4. **Estimates are compared** to true values
+
+This ensures **unbiased parameter recovery** when the model is correctly specified.
+
+### 8.2 Folder Structure
+
+```
+models/mnl_basic/
+├── config.json          # True parameters
+├── simulate_full_data.py # DGP matching model
+├── model.py             # Biogeme estimation
+├── run.py               # Orchestration script
+├── data/
+│   └── simulated_data.csv
+├── results/
+│   ├── parameter_comparison.csv
+│   └── estimation_results.csv
+├── output/
+│   └── latex/
+│       ├── parameter_table.tex
+│       └── model_summary.tex
+└── policy_analysis/
+    └── wtp.csv
 ```
 
-**Rationale**:
-- Raw fees range 0 to ~5.6 million TL
-- Scaled fees range 0 to ~560
-- With coefficient ~-0.008, utility contribution = -0.008 x 70 = -0.56 (reasonable)
+### 8.3 Running a Model
 
-### Coefficient Interpretation
-
-| Coefficient | Meaning |
-|-------------|---------|
-| B_FEE = -0.008 | 10,000 TL increase -> -0.008 utility |
-| B_FEE = -0.008 | 100,000 TL increase -> -0.08 utility |
-
-**Willingness-to-Pay (WTP)**:
-```
-WTP for 1 month less duration = -B_DUR / B_FEE x 10,000 TL
+```bash
+cd models/mnl_basic
+python run.py
 ```
 
-### Auto-Scaling in ICLV
+**What happens**:
+1. Loads config.json
+2. Calls simulate_full_data.py to generate data
+3. Calls model.py to estimate
+4. Computes bias, RMSE, coverage
+5. Saves results and LaTeX tables
 
-When `auto_scale=True`, the ICLV module:
-1. Detects max attribute magnitude
-2. Computes scale factor as `10^floor(log10(max))`
-3. Scales during estimation
-4. Reports `ScalingInfo` with original-scale conversions
+### 8.4 Validation Output
+
+Example `parameter_comparison.csv`:
+
+```
+Parameter,True,Estimate,SE,t-stat,Bias,Bias%,CI_Lower,CI_Upper,Covered
+ASC_paid,5.00,4.92,0.38,12.95,-0.08,-1.5%,4.18,5.66,Yes
+B_FEE,-0.080,-0.079,0.007,-10.61,0.001,+1.8%,-0.093,-0.065,Yes
+B_DUR,-0.080,-0.081,0.012,-6.55,-0.001,-0.6%,-0.104,-0.057,Yes
+```
 
 ---
 
-## Panel Data Structure
+## 9. Extended Model Specifications
 
-### Why Panel Matters
+### 9.1 MNL Extended (8 Models)
 
-Each respondent answers T choice tasks. Observations within a respondent are **correlated** due to:
-- Persistent taste preferences
-- Learning effects
-- Fatigue/attention
+| Model | Specification | Key Feature |
+|-------|--------------|-------------|
+| M1 | Linear | Baseline reference |
+| M2 | Log(fee) | Diminishing sensitivity |
+| M3 | fee + fee² | Quadratic non-linearity |
+| M4 | Piecewise | Threshold at median |
+| M5 | Full demographics | Age, edu, income interactions |
+| M6 | Cross demographics | Age × Income |
+| M7 | Log + demographics | Combined |
+| M8 | Heterogeneous ASC | ASC varies by demographics |
 
-### Implementation
+### 9.2 MXL Extended (8 Models)
 
-**MNL models**: Can ignore panel (treats observations as independent)
-- Yields consistent but inefficient estimates
-- Standard errors may be underestimated
+| Model | Distribution | Feature |
+|-------|-------------|---------|
+| M1 | Normal(μ, σ) for fee | Random fee sensitivity |
+| M2 | Normal for fee + dur | Both random |
+| M3 | -exp(μ + σε) for fee | Lognormal, always negative |
+| M4 | Lognormal both | Both sign-constrained |
+| M5 | Uniform[a,b] for fee | Bounded heterogeneity |
+| M6 | Random ASC | Alternative-specific |
+| M7 | Random log(fee) | Transformed scale |
+| M8 | μ + γ×demographics | Heterogeneity in mean |
 
-**MXL models**: Must account for panel structure
-```python
-database.panel('ID')  # Declare panel structure
-PanelLikelihoodTrajectory(prob)  # Same draws across tasks
+### 9.3 HCM Extended (8 Models)
+
+| Model | LV Configuration | Feature |
+|-------|-----------------|---------|
+| M1 | PatBlind on fee | Single LV effect |
+| M2 | SecDL on fee | Different construct |
+| M3 | LVs on duration | Duration interaction |
+| M4 | LVs on ASC | ASC interaction |
+| M5 | LV + LV² | Non-linear LV effect |
+| M6 | LV × demographics | LV-demographic interaction |
+| M7 | Domain separation | Patriotism→Fee, Secularism→Duration |
+| M8 | Full specification | All LVs, all attributes |
+
+### 9.4 Model Selection Criteria
+
+**Within family** (nested models):
 ```
-
-**ICLV models**: Panel support via `use_panel=True`
-- Same LV draws used across tasks for each individual
-- Cluster-robust SE by individual
-
-### Warm-Start Strategy
-
-Models are estimated in sequence, using previous estimates as starting values:
-
-```
-MNL-Basic -> MNL-Demographics -> MNL-Full
-     |
-  Baseline -> MXL models
-     |
-  Baseline -> HCM models
-     |
-  Two-stage -> ICLV
-```
-
-Benefits:
-- Faster convergence
-- Better local optima avoidance
-- More stable estimates
-
----
-
-## Parameter Bounds
-
-### Standard Bounds
-
-| Parameter Type | Lower | Upper | Rationale |
-|----------------|-------|-------|-----------|
-| B_FEE | -10 | 0 | Fee always negative (disutility) |
-| B_DUR | -5 | 0 | Duration always negative |
-| ASC | -10 | 10 | Can be positive or negative |
-| LV on Fee | -2 | 2 | Moderate interaction |
-| LV on Duration | -1 | 1 | Smaller scale |
-| Sigma (MXL) | 0.001 | 5 | Must be positive |
-
-### Why Use Bounds?
-
-1. **Economic theory**: Fee/duration should be negative
-2. **Numerical stability**: Prevents extreme values during optimization
-3. **Identification**: Helps with multicollinearity
-
----
-
-## Model Selection
-
-### Fit Statistics
-
-| Statistic | Formula | Use |
-|-----------|---------|-----|
-| AIC | 2K - 2LL | Prediction (less penalty) |
-| BIC | K x ln(n) - 2LL | Explanation (more penalty) |
-| rho^2 | 1 - LL/LL_0 | Overall fit (0-1) |
-
-### Nested Model Testing
-
-For nested models, use Likelihood Ratio test:
-
-```
-LR = 2 x (LL_full - LL_restricted)
+LR = 2 × (LL_full - LL_restricted)
 df = K_full - K_restricted
-p-value from chi^2 distribution
+p-value from χ² distribution
 ```
 
-### Non-Nested Comparison
-
-For non-nested models (MNL vs MXL), use:
-- AIC/BIC comparison
-- Out-of-sample prediction (cross-validation)
-- Theoretical considerations
-
-### Model Progression Strategy
-
-1. Start with baseline MNL
-2. Add demographics (test significance)
-3. Test functional forms (log, quadratic, piecewise)
-4. Add random parameters (MXL)
-5. Test distribution specifications
-6. Add latent variables (HCM)
-7. Compare two-stage vs ICLV
-8. Select final model based on AIC/BIC + theory
+**Across families** (non-nested):
+- AIC: 2K - 2LL (prefer lower)
+- BIC: K×ln(n) - 2LL (prefer lower)
+- Theoretical plausibility
 
 ---
 
-## Random Coefficient Sign Enforcement
+## 10. Validation Metrics
 
-### The Issue
-
-When simulating mixed logit data with random coefficients, some coefficients should theoretically always be negative (e.g., cost, time). However, with normal distributions, some individuals may get positive values.
-
-### Current Implementation
-
-Sign enforcement is applied to the **systematic mean** only (before adding random variation):
-
-```python
-# Systematic part: beta_sys = base + interactions
-# Random part: eta ~ N(0, sigma^2)
-# Combined: beta = beta_sys + eta
-
-# Sign enforcement on beta_sys (correct)
-if enforce_sign == 'negative':
-    beta_sys = -abs(beta_sys)
-
-# beta = beta_sys + eta allows sign flipping if |eta| > |beta_sys|
-```
-
-### Why Not Enforce After?
-
-Enforcing signs after adding random variation (e.g., `beta = -abs(beta_sys + eta)`) truncates the distribution and biases heterogeneity estimates.
-
-### Alternative: Lognormal Distributions
-
-For strictly-signed coefficients, use lognormal distributions:
-
-```
-# For beta < 0: beta = -exp(mu + sigma*eta)
-# For beta > 0: beta = exp(mu + sigma*eta)
-```
-
-This ensures correct signs while preserving the full distribution shape.
-
-### Practical Guidance
-
-1. If few individuals have "wrong" signs (< 5%), normal distribution is acceptable
-2. For policy analysis requiring strict signs, use lognormal
-3. Check sign-flip rate in simulation output
-
-### MXL Extended Models
-
-The extended MXL module tests multiple distributions:
-
-| Model | Distribution | Sign Behavior |
-|-------|-------------|---------------|
-| M1 | Normal | May flip |
-| M3 | Lognormal | Always negative |
-| M5 | Uniform | Bounded, may flip |
-
----
-
-## Extended Model Specifications
-
-### Why Extended Models?
-
-The framework includes 8 specifications for each model family to test:
-1. **Functional forms**: Linear, log, quadratic, piecewise
-2. **Heterogeneity sources**: Demographics, random parameters, LVs
-3. **Distribution assumptions**: Normal, lognormal, uniform
-
-### MNL Extended (8 Models)
-
-| Model | Tests |
-|-------|-------|
-| M1 | Baseline - reference |
-| M2 | Diminishing sensitivity (log fee) |
-| M3 | Non-linear effect (quadratic) |
-| M4 | Threshold effects (piecewise) |
-| M5 | Demographic heterogeneity |
-| M6 | Cross-demographic interactions |
-| M7 | Combined functional form + demo |
-| M8 | Heterogeneous ASC |
-
-### MXL Extended (8 Models)
-
-| Model | Tests |
-|-------|-------|
-| M1 | Fee heterogeneity |
-| M2 | Multi-attribute heterogeneity |
-| M3 | Sign-constrained (lognormal) |
-| M4 | All lognormal |
-| M5 | Bounded heterogeneity (uniform) |
-| M6 | ASC heterogeneity |
-| M7 | Transformed scale |
-| M8 | Heterogeneity in mean |
-
-### HCM Extended (8 Models)
-
-| Model | Tests |
-|-------|-------|
-| M1 | Single LV effect (PatBlind) |
-| M2 | Alternative LV (SecDL) |
-| M3 | LVs on different attribute |
-| M4 | LVs on ASC |
-| M5 | Non-linear LV effect |
-| M6 | LV-demographic interaction |
-| M7 | Domain separation |
-| M8 | Full specification |
-
-### Selection Criteria
-
-1. **Within family**: LR test for nested, AIC/BIC for non-nested
-2. **Across families**: Focus on theoretical interpretation
-3. **Parsimony**: Prefer simpler models unless gain is substantial
-4. **Stability**: Check parameter stability across specifications
-
----
-
-## Validation with Simulated Data
-
-### Monte Carlo Validation
-
-With simulated data, the framework validates estimation by comparing estimates to true (known) values:
-
-```python
-# True parameters from config
-true_params = config['choice_model']['parameters']
-
-# Estimated parameters from model
-est_params = result.estimates
-
-# Compute metrics
-bias = est_params - true_params
-pct_bias = 100 * bias / true_params
-rmse = sqrt(mean(bias^2))
-coverage = sum(in_ci) / n_params
-```
-
-### Metrics
+### 10.1 Parameter Recovery Metrics
 
 | Metric | Formula | Target |
 |--------|---------|--------|
 | Bias | estimate - true | Near 0 |
-| % Bias | 100 x bias / true | < 10% |
-| RMSE | sqrt(mean(bias^2)) | Low |
-| Coverage | % true in 95% CI | ~95% |
+| % Bias | 100 × (estimate - true) / \|true\| | < 10% |
+| RMSE | √(Σ(bias²)/n) | Low |
+| 95% CI Coverage | % true values in CI | ~95% |
 
-### Attenuation Bias Quantification
+### 10.2 Target Benchmarks
 
-For HCM vs ICLV comparison:
+For well-specified models:
+- **Bias** < 10% for all parameters
+- **Coverage** ≈ 95% (90-97% acceptable)
+- **All parameters significant** (|t| > 1.96)
 
-```python
-# Attenuation = 1 - (HCM estimate / ICLV estimate)
-attenuation_pct = 100 * (1 - hcm_coef / iclv_coef)
+### 10.3 Model Fit Statistics
 
-# Expected: 15-30% for typical measurement quality
+| Statistic | Formula | Interpretation |
+|-----------|---------|----------------|
+| Log-likelihood (LL) | Σ ln(P_choice) | Higher = better fit |
+| AIC | 2K - 2LL | Lower = better (penalizes complexity) |
+| BIC | K×ln(n) - 2LL | Lower = better (stronger penalty) |
+| McFadden ρ² | 1 - LL/LL_0 | 0-1 scale, higher = better |
+
+**ρ² interpretation**:
+- 0.20-0.40: Good fit for discrete choice models
+- \> 0.40: Excellent fit
+- < 0.10: Poor fit
+
+---
+
+## 11. LaTeX Output Format
+
+### 11.1 Generated Tables
+
+| File | Contents |
+|------|----------|
+| `parameter_table.tex` | Estimates with SE, t-stats, bias, coverage |
+| `model_summary.tex` | LL, K, AIC, BIC, ρ², convergence |
+| `policy_summary.tex` | WTP, market shares |
+| `elasticity_table.tex` | Own and cross elasticities |
+
+### 11.2 Significance Stars
+
+```
+*** p < 0.001 (|t| > 3.291)
+**  p < 0.01  (|t| > 2.576)
+*   p < 0.05  (|t| > 1.960)
+```
+
+### 11.3 Example Parameter Table
+
+```latex
+\begin{table}[htbp]
+\centering
+\caption{MNL Basic Parameter Estimates}
+\begin{tabular}{lrrrrrr}
+\hline
+Parameter & True & Estimate & SE & t-stat & Bias\% & Covered \\
+\hline
+ASC\_paid & 5.00 & 4.92*** & 0.38 & 12.95 & -1.5\% & Yes \\
+B\_FEE & -0.080 & -0.079*** & 0.007 & -10.61 & +1.8\% & Yes \\
+B\_DUR & -0.080 & -0.081*** & 0.012 & -6.55 & -0.6\% & Yes \\
+\hline
+\end{tabular}
+\end{table}
 ```
 
 ---
 
-## References
+## 12. References
 
-### Core Methodology
-- Train, K. (2009). Discrete Choice Methods with Simulation. Cambridge University Press.
-- Ben-Akiva, M., & Lerman, S. (1985). Discrete Choice Analysis. MIT Press.
+### Core Discrete Choice Methodology
 
-### Hybrid Choice Models
-- Ben-Akiva, M., et al. (2002). Hybrid Choice Models: Progress and Challenges. Marketing Letters.
-- Walker, J., & Ben-Akiva, M. (2002). Generalized random utility model. Mathematical Social Sciences.
+- Train, K. (2009). *Discrete Choice Methods with Simulation* (2nd ed.). Cambridge University Press.
+- Ben-Akiva, M., & Lerman, S. (1985). *Discrete Choice Analysis: Theory and Application to Travel Demand*. MIT Press.
+- McFadden, D. (1974). Conditional logit analysis of qualitative choice behavior. In P. Zarembka (Ed.), *Frontiers in Econometrics*.
 
-### ICLV
-- Vij, A., & Walker, J. (2016). How, when and why integrated choice and latent variable models are latently useful. Transportation Research Part B.
-- Daly, A., et al. (2012). A synthesis of analytical results on integration of latent variables in choice models. Transportation.
+### Hybrid Choice Models and ICLV
 
-### Simulation
-- Halton, J. (1960). On the efficiency of certain quasi-random sequences. Numerische Mathematik.
-- Train, K. (2000). Halton sequences for mixed logit. Working Paper.
+- Ben-Akiva, M., et al. (2002). Hybrid Choice Models: Progress and Challenges. *Marketing Letters*, 13(3), 163-175.
+- Walker, J., & Ben-Akiva, M. (2002). Generalized random utility model. *Mathematical Social Sciences*, 43(3), 303-343.
+- Vij, A., & Walker, J. (2016). How, when and why integrated choice and latent variable models are latently useful. *Transportation Research Part B*, 90, 208-224.
+- Daly, A., et al. (2012). A synthesis of analytical results on integration of latent variables in choice models. *Transportation*.
+
+### Welfare Analysis
+
+- Small, K., & Rosen, H. (1981). Applied welfare economics with discrete choice models. *Econometrica*, 49(1), 105-130.
+- McFadden, D. (1999). Computing willingness-to-pay in random utility models. In *Trade, Theory and Econometrics*. Routledge.
+
+### Simulation and Estimation
+
+- Halton, J. (1960). On the efficiency of certain quasi-random sequences of points in evaluating multi-dimensional integrals. *Numerische Mathematik*, 2(1), 84-90.
+- Train, K. (2000). Halton sequences for mixed logit. Working Paper, UC Berkeley.
 
 ### Robust Inference
-- White, H. (1980). A heteroskedasticity-consistent covariance matrix estimator. Econometrica.
-- Wooldridge, J. (2010). Econometric Analysis of Cross Section and Panel Data. MIT Press.
+
+- White, H. (1980). A heteroskedasticity-consistent covariance matrix estimator and a direct test for heteroskedasticity. *Econometrica*, 48(4), 817-838.
+- Wooldridge, J. (2010). *Econometric Analysis of Cross Section and Panel Data* (2nd ed.). MIT Press.
+
+### Measurement and Psychometrics
+
+- Bollen, K. (1989). *Structural Equations with Latent Variables*. Wiley.
+- Cronbach, L. (1951). Coefficient alpha and the internal structure of tests. *Psychometrika*, 16(3), 297-334.
+
+---
+
+*Last updated: January 2026*
