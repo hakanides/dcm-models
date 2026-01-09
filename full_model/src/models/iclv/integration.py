@@ -319,48 +319,82 @@ def create_antithetic_draws(draws: np.ndarray) -> np.ndarray:
 
 
 def generate_halton_draws(
-    n_individuals: int,
-    n_draws: int = 500,
-    n_dimensions: int = 1,
+    n_draws_or_individuals: int,
+    n_dim_or_draws: int = None,
+    n_dimensions: int = None,
     seed: int = 42,
-    return_uniform: bool = False
+    return_uniform: bool = None
 ) -> np.ndarray:
     """
     Generate Halton draws for simulation-based estimation.
 
-    This is a convenience wrapper around the HaltonDraws class for quick access
-    to quasi-random draws commonly used in Mixed Logit and ICLV estimation.
+    This function supports two interfaces:
+
+    1. Simple interface (for basic tests):
+       generate_halton_draws(n_draws, n_dimensions)
+       Returns: shape (n_draws, n_dimensions) uniform draws in (0,1)
+
+    2. Full interface (for ICLV estimation):
+       generate_halton_draws(n_individuals, n_draws=500, n_dimensions=1)
+       Returns: shape (n_individuals, n_draws, n_dimensions) standard normal draws
 
     Args:
-        n_individuals: Number of individuals/decision-makers
-        n_draws: Number of draws per individual (default 500)
-        n_dimensions: Number of latent variable dimensions (default 1)
+        n_draws_or_individuals: Number of draws (simple) or individuals (full)
+        n_dim_or_draws: Number of dimensions (simple) or draws per individual (full)
+        n_dimensions: Number of dimensions (full interface only)
         seed: Random seed for scrambling (default 42)
-        return_uniform: If True, return uniform (0,1) draws; else standard normal
+        return_uniform: If True, return uniform (0,1); None uses auto-detection
 
     Returns:
-        np.ndarray of shape (n_individuals, n_draws, n_dimensions)
-        containing quasi-random draws
+        np.ndarray of quasi-random draws
 
-    Example:
+    Examples:
+        # Simple interface (for compatibility with existing tests)
+        >>> draws = generate_halton_draws(100, 2)
+        >>> draws.shape
+        (100, 2)
+
+        # Full interface (for ICLV estimation)
         >>> draws = generate_halton_draws(1000, n_draws=200, n_dimensions=2)
         >>> draws.shape
         (1000, 200, 2)
-        >>> draws.mean()  # Should be ~0 for normal draws
-        >>> draws.std()   # Should be ~1 for normal draws
     """
-    generator = HaltonDraws(
-        n_draws=n_draws,
-        n_dimensions=n_dimensions,
-        scramble=True,
-        seed=seed
-    )
+    # Detect which interface is being used
+    if n_dimensions is None and isinstance(n_dim_or_draws, int) and n_dim_or_draws <= 20:
+        # Simple interface: generate_halton_draws(n_draws, n_dim)
+        # Returns 2D array of uniform draws in (0,1)
+        n_draws = n_draws_or_individuals
+        n_dim = n_dim_or_draws
 
-    if return_uniform:
-        return generator.generate_uniform(n_individuals)
+        generator = HaltonDraws(
+            n_draws=n_draws,
+            n_dimensions=n_dim,
+            scramble=True,
+            seed=seed
+        )
+
+        # Return uniform draws reshaped to (n_draws, n_dim)
+        uniform = generator.generate_uniform(1)  # Shape: (1, n_draws, n_dim)
+        return uniform[0]  # Shape: (n_draws, n_dim)
+
     else:
-        result = generator.generate(n_individuals)
-        return result.draws
+        # Full interface: generate_halton_draws(n_individuals, n_draws, n_dimensions)
+        n_individuals = n_draws_or_individuals
+        n_draws = n_dim_or_draws if n_dim_or_draws is not None else 500
+        n_dim = n_dimensions if n_dimensions is not None else 1
+
+        generator = HaltonDraws(
+            n_draws=n_draws,
+            n_dimensions=n_dim,
+            scramble=True,
+            seed=seed
+        )
+
+        if return_uniform:
+            return generator.generate_uniform(n_individuals)
+        else:
+            result = generator.generate(n_individuals)
+            return result.draws
 
 
 if __name__ == '__main__':

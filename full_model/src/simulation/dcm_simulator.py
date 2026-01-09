@@ -282,9 +282,14 @@ class Population:
 
     @staticmethod
     def _factor_to_lv_name(factor: str) -> str:
-        """Map factor name from items config to latent variable name."""
+        """Map factor name from items config to latent variable name.
+
+        Supports both short names (blind, constructive, dl, fp) and
+        full LV names (pat_blind, pat_constructive, sec_dl, sec_fp).
+        """
         fac = str(factor).strip().lower()
         mapping = {
+            # Short names
             'blind': 'pat_blind',
             'constructive': 'pat_constructive',
             'daily': 'sec_dl',
@@ -294,6 +299,11 @@ class Population:
             'fp': 'sec_fp',
             'faithandprayer': 'sec_fp',
             'faith_prayer': 'sec_fp',
+            # Full LV names (passthrough)
+            'pat_blind': 'pat_blind',
+            'pat_constructive': 'pat_constructive',
+            'sec_dl': 'sec_dl',
+            'sec_fp': 'sec_fp',
         }
         if fac in mapping:
             return mapping[fac]

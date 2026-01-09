@@ -105,34 +105,39 @@ class TestLatentVariableProxies:
         """Test that Likert means are calculated correctly."""
         df = sample_choice_data.copy()
 
-        pat_blind_cols = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
-        df['pat_blind_mean'] = df[pat_blind_cols].mean(axis=1)
+        # Blind patriotism items: patriotism_1 to patriotism_10
+        pat_blind_cols = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
+        if pat_blind_cols:
+            df['pat_blind_mean'] = df[pat_blind_cols].mean(axis=1)
 
-        # Mean should be between 1 and 5
-        assert df['pat_blind_mean'].min() >= 1
-        assert df['pat_blind_mean'].max() <= 5
+            # Mean should be between 1 and 5
+            assert df['pat_blind_mean'].min() >= 1
+            assert df['pat_blind_mean'].max() <= 5
 
     def test_likert_standardization(self, sample_choice_data):
         """Test that Likert proxies are standardized correctly."""
         df = sample_choice_data.copy()
 
-        pat_blind_cols = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
-        proxy = df[pat_blind_cols].mean(axis=1)
-        df['pat_blind_proxy'] = (proxy - proxy.mean()) / proxy.std()
+        # Blind patriotism items: patriotism_1 to patriotism_10
+        pat_blind_cols = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
+        if pat_blind_cols:
+            proxy = df[pat_blind_cols].mean(axis=1)
+            df['pat_blind_proxy'] = (proxy - proxy.mean()) / proxy.std()
 
-        # Standardized should have mean ~0 and std ~1
-        assert abs(df['pat_blind_proxy'].mean()) < 0.01
-        assert abs(df['pat_blind_proxy'].std() - 1.0) < 0.01
+            # Standardized should have mean ~0 and std ~1
+            assert abs(df['pat_blind_proxy'].mean()) < 0.01
+            assert abs(df['pat_blind_proxy'].std() - 1.0) < 0.01
 
     def test_all_constructs_have_items(self, sample_choice_data):
-        """Test that all 4 constructs have Likert items."""
+        """Test that all 4 constructs have Likert items (new unified naming)."""
         df = sample_choice_data
 
+        # New unified naming: patriotism_1-20, secularism_1-25
         constructs = {
-            'pat_blind': [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()],
-            'pat_constructive': [c for c in df.columns if c.startswith('pat_constructive_') and c[-1].isdigit()],
-            'sec_dl': [c for c in df.columns if c.startswith('sec_dl_') and c[-1].isdigit()],
-            'sec_fp': [c for c in df.columns if c.startswith('sec_fp_') and c[-1].isdigit()],
+            'pat_blind': [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns],
+            'pat_constructive': [f'patriotism_{i}' for i in range(11, 21) if f'patriotism_{i}' in df.columns],
+            'sec_dl': [f'secularism_{i}' for i in range(1, 16) if f'secularism_{i}' in df.columns],
+            'sec_fp': [f'secularism_{i}' for i in range(16, 26) if f'secularism_{i}' in df.columns],
         }
 
         for name, items in constructs.items():

@@ -389,7 +389,10 @@ class TestLVCorrelation:
         try:
             from src.models.iclv.estimation import estimate_lv_correlation
 
-            constructs = {'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3']}
+            # Use unified naming: patriotism_1-10 for blind patriotism
+            constructs = {'pat_blind': [f'patriotism_{i}' for i in range(1, 4) if f'patriotism_{i}' in iclv_data.columns]}
+            if not constructs['pat_blind']:
+                constructs = {'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3']}
             corr = estimate_lv_correlation(iclv_data, constructs)
 
             # Single construct should return 1x1 identity
@@ -404,9 +407,19 @@ class TestLVCorrelation:
         try:
             from src.models.iclv.estimation import estimate_lv_correlation
 
+            # Use unified naming: patriotism_1-10 for blind, secularism_1-15 for daily
+            pat_items = [f'patriotism_{i}' for i in range(1, 4) if f'patriotism_{i}' in sample_choice_data.columns]
+            sec_items = [f'secularism_{i}' for i in range(1, 4) if f'secularism_{i}' in sample_choice_data.columns]
+
+            # Fallback to old naming if new naming not present
+            if not pat_items:
+                pat_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3']
+            if not sec_items:
+                sec_items = ['sec_dl_1', 'sec_dl_2', 'sec_dl_3']
+
             constructs = {
-                'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3'],
-                'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3'],
+                'pat_blind': pat_items,
+                'sec_dl': sec_items,
             }
             corr = estimate_lv_correlation(sample_choice_data, constructs)
 

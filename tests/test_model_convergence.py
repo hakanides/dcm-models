@@ -38,12 +38,18 @@ def prepare_test_database(df):
     df['edu_c'] = (df['edu_idx'] - 3) / 2
     df['inc_c'] = (df['income_indiv_idx'] - 3) / 2
 
-    # Create LV proxies
+    # Create LV proxies - use unified naming with fallback
+    def get_items(df, domain, start, end, fallback_prefix):
+        unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+        if unified:
+            return unified
+        return [c for c in df.columns if c.startswith(fallback_prefix)][:4]
+
     lv_items = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'pat_const': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-        'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
+        'pat_blind': get_items(df, 'patriotism', 1, 4, 'pat_blind_'),
+        'pat_const': get_items(df, 'patriotism', 11, 14, 'pat_constructive_'),
+        'sec_dl': get_items(df, 'secularism', 1, 4, 'sec_dl_'),
+        'sec_fp': get_items(df, 'secularism', 16, 19, 'sec_fp_'),
     }
 
     for lv_name, items in lv_items.items():

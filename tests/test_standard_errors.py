@@ -75,11 +75,11 @@ class TestStandardErrorBasics:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'se_basic_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         print("\nStandard Error Validation:")
         print("-" * 50)
@@ -129,19 +129,18 @@ class TestStandardErrorBasics:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'robust_se_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
         # Try to get robust SEs
         try:
-            robust_se = results.getRobustStdErr()
-            assert robust_se is not None, "Robust SE should be available"
+            betas = results.get_beta_values()
+            regular_se = {p: results.get_parameter_std_err(p) for p in betas}
+            robust_se = {p: results.get_parameter_robust_std_err(p) for p in betas}
 
             print("\nRobust vs Regular SE Comparison:")
             print("-" * 60)
-            regular_se = results.getStdErr()
             for param in regular_se:
                 reg = regular_se[param]
                 rob = robust_se.get(param, np.nan)
@@ -238,13 +237,12 @@ class TestBootstrapStandardErrors:
 
             biogeme_obj = bio.BIOGEME(database, logprob)
             biogeme_obj.modelName = f'boot_{b}'
-            biogeme_obj.generate_html = False
-            biogeme_obj.generate_pickle = False
+            # HTML and pickle generation controlled via biogeme.toml
 
             try:
                 results = biogeme_obj.estimate()
-                if results.algorithm_has_converged():
-                    betas = results.getBetaValues()
+                if results.algorithm_has_converged:
+                    betas = results.get_beta_values()
                     for param in bootstrap_estimates:
                         if param in betas:
                             bootstrap_estimates[param].append(betas[param])
@@ -314,13 +312,12 @@ class TestConfidenceIntervals:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'ci_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
-        betas = results.getBetaValues()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         # Construct 95% CIs: beta ± 1.96 * SE
         z_95 = 1.96

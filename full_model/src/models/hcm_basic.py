@@ -43,6 +43,8 @@ import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
 
+from src.utils.item_detection import get_lv_items, get_items_by_prefix
+
 
 # =============================================================================
 # LATENT VARIABLE ESTIMATION
@@ -150,12 +152,15 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
     for alt in [1, 2, 3]:
         df[f'fee{alt}_10k'] = df[f'fee{alt}'] / fee_scale
 
-    # Find Blind Patriotism items
-    pat_blind_items = [c for c in df.columns
-                       if c.startswith('pat_blind_') and c[-1].isdigit()]
+    # Find Blind Patriotism items using new unified naming (patriotism_1-10)
+    pat_blind_items = get_lv_items(df, 'pat_blind')
+
+    # Fallback to legacy prefix detection
+    if not pat_blind_items:
+        pat_blind_items = get_items_by_prefix(df, 'pat_blind_')
 
     if not pat_blind_items:
-        raise ValueError("No pat_blind_* columns found in data")
+        raise ValueError("No blind patriotism items found (expected patriotism_1-10 or pat_blind_*)")
 
     print(f"Found {len(pat_blind_items)} Blind Patriotism items: {pat_blind_items}")
 
@@ -408,7 +413,7 @@ def estimate_hcm_basic(data_path: str,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Estimate HCM Basic model')
     parser.add_argument('--data', type=str, required=True, help='Path to data CSV')
-    parser.add_argument('--config', type=str, default='config/model_config_advanced.json',
+    parser.add_argument('--config', type=str, default='config/model_config.json',
                         help='Path to config JSON with true parameters')
     parser.add_argument('--output', type=str, default='results/hcm_basic',
                         help='Output directory')

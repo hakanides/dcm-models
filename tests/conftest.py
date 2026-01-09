@@ -31,7 +31,7 @@ def project_root():
 @pytest.fixture(scope="session")
 def model_config():
     """Load model configuration."""
-    config_path = PROJECT_ROOT / 'config' / 'model_config_advanced.json'
+    config_path = PROJECT_ROOT / 'config' / 'model_config.json'
     if config_path.exists():
         with open(config_path) as f:
             return json.load(f)
@@ -47,7 +47,7 @@ def model_config():
 @pytest.fixture(scope="session")
 def model_config_path():
     """Return path to model configuration file."""
-    config_path = PROJECT_ROOT / 'config' / 'model_config_advanced.json'
+    config_path = PROJECT_ROOT / 'config' / 'model_config.json'
     if config_path.exists():
         return str(config_path)
 
@@ -61,7 +61,7 @@ def model_config_path():
 @pytest.fixture(scope="session")
 def items_config():
     """Load items configuration."""
-    config_path = PROJECT_ROOT / 'config' / 'items_config_advanced.csv'
+    config_path = PROJECT_ROOT / 'config' / 'items_config.csv'
     if config_path.exists():
         return pd.read_csv(config_path)
     return None
@@ -114,29 +114,47 @@ def sample_choice_data():
         pat_blind_true = 0.15 * age_c - 0.10 * inc_c + np.random.normal(0, 1)
         sec_dl_true = -0.05 * age_c + 0.12 * inc_c + np.random.normal(0, 1)
 
-        # Likert items (1-5 scale) from true LVs
-        pat_blind_items = []
-        for loading in [1.0, 0.85, 0.78, 0.72]:
-            latent_value = loading * pat_blind_true
-            # Ordered probit thresholds
-            thresholds = [-1.5, -0.5, 0.5, 1.5]
-            prob = np.random.random()
-            if prob < 0.1:
-                item = 1
-            elif prob < 0.3:
-                item = 2
-            elif prob < 0.7:
-                item = 3
-            elif prob < 0.9:
-                item = 4
-            else:
-                item = 5
-            pat_blind_items.append(item)
+        # Generate Likert items with new unified naming
+        def generate_likert_item(lv_value, loading):
+            y_star = loading * lv_value + np.random.normal(0, 1)
+            thresholds = [-1.0, -0.35, 0.35, 1.0]
+            if y_star <= thresholds[0]: return 1
+            elif y_star <= thresholds[1]: return 2
+            elif y_star <= thresholds[2]: return 3
+            elif y_star <= thresholds[3]: return 4
+            else: return 5
 
-        # Similar for other constructs (simplified)
-        pat_const = np.random.randint(1, 6, 4)
-        sec_dl_items = np.random.randint(1, 6, 4)
-        sec_fp = np.random.randint(1, 6, 4)
+        # Generate patriotism items (1-20: blind 1-10, constructive 11-20)
+        pat_const_true = np.random.normal(0, 1)
+        patriotism_items = {}
+        for item_num in range(1, 21):
+            if item_num <= 10:
+                lv = pat_blind_true
+                loading = 0.85 - (item_num - 1) * 0.01
+            else:
+                lv = pat_const_true
+                loading = 0.82 - (item_num - 11) * 0.01
+            response = generate_likert_item(lv, loading)
+            # Reverse items 5, 7, 12
+            if item_num in [5, 7, 12]:
+                response = 6 - response
+            patriotism_items[f'patriotism_{item_num}'] = response
+
+        # Generate secularism items (1-25: daily 1-15, faith 16-25)
+        sec_fp_true = np.random.normal(0, 1)
+        secularism_items = {}
+        for item_num in range(1, 26):
+            if item_num <= 15:
+                lv = sec_dl_true
+                loading = 0.80 - (item_num - 1) * 0.01
+            else:
+                lv = sec_fp_true
+                loading = 0.78 - (item_num - 16) * 0.01
+            response = generate_likert_item(lv, loading)
+            # Reverse items 1, 13
+            if item_num in [1, 13]:
+                response = 6 - response
+            secularism_items[f'secularism_{item_num}'] = response
 
         for t in range(n_tasks):
             # Choice task attributes
@@ -174,7 +192,7 @@ def sample_choice_data():
 
             choice = np.random.choice([1, 2, 3], p=probs)
 
-            rows.append({
+            rec = {
                 'ID': i + 1,
                 'TASK_ID': t + 1,
                 'CHOICE': choice,
@@ -189,26 +207,15 @@ def sample_choice_data():
                 'income_indiv_idx': income_indiv_idx,
                 'income_house_idx': income_house_idx,
                 'marital_idx': marital_idx,
-                'pat_blind_1': pat_blind_items[0],
-                'pat_blind_2': pat_blind_items[1],
-                'pat_blind_3': pat_blind_items[2],
-                'pat_blind_4': pat_blind_items[3],
-                'pat_constructive_1': pat_const[0],
-                'pat_constructive_2': pat_const[1],
-                'pat_constructive_3': pat_const[2],
-                'pat_constructive_4': pat_const[3],
-                'sec_dl_1': sec_dl_items[0],
-                'sec_dl_2': sec_dl_items[1],
-                'sec_dl_3': sec_dl_items[2],
-                'sec_dl_4': sec_dl_items[3],
-                'sec_fp_1': sec_fp[0],
-                'sec_fp_2': sec_fp[1],
-                'sec_fp_3': sec_fp[2],
-                'sec_fp_4': sec_fp[3],
                 # True LV values for validation
                 'pat_blind_true': pat_blind_true,
+                'pat_constructive_true': pat_const_true,
                 'sec_dl_true': sec_dl_true,
-            })
+                'sec_fp_true': sec_fp_true,
+            }
+            rec.update(patriotism_items)
+            rec.update(secularism_items)
+            rows.append(rec)
 
     return pd.DataFrame(rows)
 
@@ -263,36 +270,44 @@ def large_synthetic_data():
         def generate_likert(lv_value, loading):
             """Generate ordinal response from latent value."""
             y_star = loading * lv_value + np.random.normal(0, 1)
-            thresholds = [-1.0, -0.35, 0.35, 1.0]  # New balanced thresholds
-            if y_star <= thresholds[0]:
-                return 1
-            elif y_star <= thresholds[1]:
-                return 2
-            elif y_star <= thresholds[2]:
-                return 3
-            elif y_star <= thresholds[3]:
-                return 4
-            else:
-                return 5
+            thresholds = [-1.0, -0.35, 0.35, 1.0]
+            if y_star <= thresholds[0]: return 1
+            elif y_star <= thresholds[1]: return 2
+            elif y_star <= thresholds[2]: return 3
+            elif y_star <= thresholds[3]: return 4
+            else: return 5
 
-        # Pat blind items (loadings: 1.0, 0.85, 0.78, 0.72)
-        pat_blind_items = [
-            generate_likert(pat_blind_true, 1.0),
-            generate_likert(pat_blind_true, 0.85),
-            generate_likert(pat_blind_true, 0.78),
-            generate_likert(pat_blind_true, 0.72),
-        ]
-
-        # Pat constructive items
+        # Generate patriotism items (1-20: blind 1-10, constructive 11-20)
         pat_const_true = np.random.normal(0, 1)
-        pat_const_items = [generate_likert(pat_const_true, l) for l in [1.0, 0.82, 0.75, 0.70]]
+        patriotism_items = {}
+        for item_num in range(1, 21):
+            if item_num <= 10:
+                lv = pat_blind_true
+                loading = 0.85 - (item_num - 1) * 0.01
+            else:
+                lv = pat_const_true
+                loading = 0.82 - (item_num - 11) * 0.01
+            response = generate_likert(lv, loading)
+            # Reverse items 5, 7, 12
+            if item_num in [5, 7, 12]:
+                response = 6 - response
+            patriotism_items[f'patriotism_{item_num}'] = response
 
-        # Sec DL items
-        sec_dl_items = [generate_likert(sec_dl_true, l) for l in [1.0, 0.80, 0.73, 0.68]]
-
-        # Sec FP items
+        # Generate secularism items (1-25: daily 1-15, faith 16-25)
         sec_fp_true = np.random.normal(0, 1)
-        sec_fp_items = [generate_likert(sec_fp_true, l) for l in [1.0, 0.78, 0.72, 0.65]]
+        secularism_items = {}
+        for item_num in range(1, 26):
+            if item_num <= 15:
+                lv = sec_dl_true
+                loading = 0.80 - (item_num - 1) * 0.01
+            else:
+                lv = sec_fp_true
+                loading = 0.78 - (item_num - 16) * 0.01
+            response = generate_likert(lv, loading)
+            # Reverse items 1, 13
+            if item_num in [1, 13]:
+                response = 6 - response
+            secularism_items[f'secularism_{item_num}'] = response
 
         # Individual-specific fee sensitivity
         B_FEE_i = TRUE_B_FEE + TRUE_B_FEE_PAT * pat_blind_true
@@ -324,7 +339,7 @@ def large_synthetic_data():
 
             choice = np.random.choice([1, 2, 3], p=probs)
 
-            rows.append({
+            rec = {
                 'ID': i + 1,
                 'TASK_ID': t + 1,
                 'CHOICE': choice,
@@ -339,27 +354,16 @@ def large_synthetic_data():
                 'income_indiv_idx': income_indiv_idx,
                 'income_house_idx': income_house_idx,
                 'marital_idx': marital_idx,
-                'pat_blind_1': pat_blind_items[0],
-                'pat_blind_2': pat_blind_items[1],
-                'pat_blind_3': pat_blind_items[2],
-                'pat_blind_4': pat_blind_items[3],
-                'pat_constructive_1': pat_const_items[0],
-                'pat_constructive_2': pat_const_items[1],
-                'pat_constructive_3': pat_const_items[2],
-                'pat_constructive_4': pat_const_items[3],
-                'sec_dl_1': sec_dl_items[0],
-                'sec_dl_2': sec_dl_items[1],
-                'sec_dl_3': sec_dl_items[2],
-                'sec_dl_4': sec_dl_items[3],
-                'sec_fp_1': sec_fp_items[0],
-                'sec_fp_2': sec_fp_items[1],
-                'sec_fp_3': sec_fp_items[2],
-                'sec_fp_4': sec_fp_items[3],
                 # True values for validation
                 'pat_blind_true': pat_blind_true,
+                'pat_constructive_true': pat_const_true,
                 'sec_dl_true': sec_dl_true,
+                'sec_fp_true': sec_fp_true,
                 'B_FEE_individual': B_FEE_i,
-            })
+            }
+            rec.update(patriotism_items)
+            rec.update(secularism_items)
+            rows.append(rec)
 
     return pd.DataFrame(rows)
 
@@ -374,11 +378,17 @@ def small_choice_data():
     rows = []
     for i in range(n_individuals):
         age_idx = np.random.choice([0, 1, 2, 3, 4])
+
+        # Generate minimal patriotism items (first 5)
+        patriotism_items = {f'patriotism_{j}': np.random.randint(1, 6) for j in range(1, 6)}
+        # Generate minimal secularism items (first 5)
+        secularism_items = {f'secularism_{j}': np.random.randint(1, 6) for j in range(1, 6)}
+
         for t in range(n_tasks):
             fee1 = np.random.uniform(10000, 100000)
             fee2 = np.random.uniform(10000, 100000)
 
-            rows.append({
+            rec = {
                 'ID': i + 1,
                 'TASK_ID': t + 1,
                 'CHOICE': np.random.choice([1, 2, 3]),
@@ -391,13 +401,10 @@ def small_choice_data():
                 'age_idx': age_idx,
                 'edu_idx': np.random.choice([0, 1, 2, 3]),
                 'income_indiv_idx': np.random.choice([0, 1, 2, 3]),
-                'pat_blind_1': np.random.randint(1, 6),
-                'pat_blind_2': np.random.randint(1, 6),
-                'pat_blind_3': np.random.randint(1, 6),
-                'sec_dl_1': np.random.randint(1, 6),
-                'sec_dl_2': np.random.randint(1, 6),
-                'sec_dl_3': np.random.randint(1, 6),
-            })
+            }
+            rec.update(patriotism_items)
+            rec.update(secularism_items)
+            rows.append(rec)
 
     return pd.DataFrame(rows)
 
@@ -439,10 +446,12 @@ def biogeme_database(sample_choice_data):
     df['edu_c'] = (df['edu_idx'] - 3) / 2
     df['inc_c'] = (df['income_indiv_idx'] - 3) / 2
 
-    # Create LV proxies
+    # Create LV proxies using new unified naming
     lv_items = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
+        'pat_blind': [f'patriotism_{i}' for i in range(1, 11)],      # patriotism_1-10
+        'pat_const': [f'patriotism_{i}' for i in range(11, 21)],     # patriotism_11-20
+        'sec_dl': [f'secularism_{i}' for i in range(1, 16)],         # secularism_1-15
+        'sec_fp': [f'secularism_{i}' for i in range(16, 26)],        # secularism_16-25
     }
 
     for lv_name, items in lv_items.items():
@@ -463,9 +472,12 @@ def biogeme_database(sample_choice_data):
 
 @pytest.fixture
 def iclv_constructs():
-    """Construct definitions for ICLV tests."""
+    """Construct definitions for ICLV tests with new unified naming."""
     return {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3'],
+        'pat_blind': [f'patriotism_{i}' for i in range(1, 11)],
+        'pat_constructive': [f'patriotism_{i}' for i in range(11, 21)],
+        'sec_dl': [f'secularism_{i}' for i in range(1, 16)],
+        'sec_fp': [f'secularism_{i}' for i in range(16, 26)],
     }
 
 
@@ -539,12 +551,12 @@ def prepare_test_database(df):
     df['edu_c'] = (df['edu_idx'] - 3) / 2
     df['inc_c'] = (df['income_indiv_idx'] - 3) / 2
 
-    # Create LV proxies
+    # Create LV proxies using new unified naming
     lv_items = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'pat_const': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-        'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
+        'pat_blind': [f'patriotism_{i}' for i in range(1, 11)],      # patriotism_1-10
+        'pat_const': [f'patriotism_{i}' for i in range(11, 21)],     # patriotism_11-20
+        'sec_dl': [f'secularism_{i}' for i in range(1, 16)],         # secularism_1-15
+        'sec_fp': [f'secularism_{i}' for i in range(16, 26)],        # secularism_16-25
     }
 
     for lv_name, items in lv_items.items():

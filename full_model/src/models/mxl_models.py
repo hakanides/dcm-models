@@ -20,13 +20,13 @@ The estimated σ will reflect what's in the DATA GENERATING PROCESS:
   → MXL will estimate σ ≈ 0 (no heterogeneity to find)
   → Only demographic/LV interactions create systematic heterogeneity
 
-- model_config_advanced.json: HAS random coefficients
+- model_config.json: HAS random coefficients
   → MXL will estimate σ > 0 matching the true values
   → b_fee10k: mean=0, std=0.3
   → b_dur: mean=0, std=0.02
 
 If MXL estimates σ ≈ 0 on your data, it's not a bug - it means the data
-was generated without random taste heterogeneity. Use model_config_advanced.json
+was generated without random taste heterogeneity. Use model_config.json
 to generate data with true random coefficients for MXL validation.
 
 Author: DCM Research Team

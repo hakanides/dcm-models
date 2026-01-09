@@ -204,8 +204,11 @@ class TestHCMExtendedSpecifications:
         """Test LV proxy creation for HCM."""
         df = sample_choice_data.copy()
 
-        # Create LV proxies
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create LV proxies - use unified naming first
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in df.columns]
+        # Fallback to old naming if new naming not present
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         proxy = df[items].mean(axis=1)
         df['pat_blind_proxy'] = (proxy - proxy.mean()) / proxy.std()
 
@@ -217,8 +220,10 @@ class TestHCMExtendedSpecifications:
         """Test quadratic LV term."""
         df = sample_choice_data.copy()
 
-        # Create LV proxy
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create LV proxy - use unified naming first
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in df.columns]
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         proxy = df[items].mean(axis=1)
         df['LV'] = (proxy - proxy.mean()) / proxy.std()
 
@@ -232,8 +237,10 @@ class TestHCMExtendedSpecifications:
         """Test LV x demographic interaction."""
         df = sample_choice_data.copy()
 
-        # Create LV proxy
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create LV proxy - use unified naming first
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in df.columns]
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         proxy = df[items].mean(axis=1)
         df['LV'] = (proxy - proxy.mean()) / proxy.std()
 
@@ -250,9 +257,15 @@ class TestHCMExtendedSpecifications:
         """Test domain separation (different LVs for different attributes)."""
         df = sample_choice_data.copy()
 
-        # Create proxies for different domains
-        pat_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
-        sec_items = ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4']
+        # Create proxies for different domains - use unified naming first
+        pat_items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in df.columns]
+        sec_items = [f'secularism_{i}' for i in range(1, 5) if f'secularism_{i}' in df.columns]
+
+        # Fallback to old naming
+        if not pat_items:
+            pat_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        if not sec_items:
+            sec_items = ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4']
 
         pat_proxy = df[pat_items].mean(axis=1)
         sec_proxy = df[sec_items].mean(axis=1)

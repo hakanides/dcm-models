@@ -23,7 +23,7 @@ This framework implements a complete DCM research pipeline designed for academic
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        SIMULATION MODULE                             │
-│  config/model_config_advanced.json → src/simulation/                │
+│  config/model_config.json → src/simulation/                │
 │  • Demographics (age, education, income)                            │
 │  • Latent variables (patriotism, secularism constructs)            │
 │  • Likert scale responses (5-point ordered probit)                 │
@@ -79,7 +79,7 @@ pip install -r requirements.txt
 
 ```bash
 python src/simulation/simulate_full_data.py \
-    --config config/model_config_advanced.json \
+    --config config/model_config.json \
     --output data/simulated/ \
     --n_individuals 1000 \
     --n_tasks 10
@@ -100,15 +100,45 @@ ls output/latex/
 
 ---
 
+## Isolated Model Validation
+
+For rigorous statistical validation, each core model has its own folder with a matching data generating process (DGP). This ensures unbiased parameter recovery when the model specification matches the true DGP.
+
+| Model | Folder | Validation Result |
+|-------|--------|------------------|
+| MNL Basic | `models/mnl_basic/` | Unbiased (<2% bias) |
+| MNL Demographics | `models/mnl_demographics/` | Unbiased (all within 95% CI) |
+| MXL Basic | `models/mxl_basic/` | Good recovery (<6% bias) |
+| HCM Basic | `models/hcm_basic/` | Expected attenuation (~50-66% on LV effect) |
+| HCM Full | `models/hcm_full/` | Expected attenuation on all LV effects |
+| ICLV | `models/iclv/` | Unbiased LV effects (2.4% vs 50% in HCM) |
+
+### Run Isolated Model
+
+```bash
+cd models/mnl_basic
+python run.py
+```
+
+Each folder contains:
+- `config.json` - Model-specific DGP (only interactions the model can estimate)
+- `simulate_full_data.py` - Standalone data generator
+- `model.py` - Biogeme estimation
+- `run.py` - Orchestrates simulation + estimation
+
+**Key Finding:** ICLV simultaneous estimation eliminates the attenuation bias present in two-stage HCM estimation (2.4% bias vs 50-66%).
+
+---
+
 ## Project Structure
 
 ```
 DCM-Research/
 ├── config/                              # Configuration files
-│   ├── model_config_advanced.json       # Main config with true parameters
+│   ├── model_config.json       # Main config with true parameters
 │   ├── model_config.json                # Simple config for testing
 │   ├── items_config.csv                 # Likert scale item definitions
-│   └── items_config_advanced.csv        # Advanced item definitions
+│   └── items_config.csv        # Advanced item definitions
 │
 ├── src/
 │   ├── models/                          # Model specifications
@@ -173,6 +203,14 @@ DCM-Research/
 │
 ├── results/
 │   └── all_models/                      # Model estimation results
+│
+├── models/                              # Isolated model validation
+│   ├── mnl_basic/                       # Basic MNL (unbiased)
+│   ├── mnl_demographics/                # MNL + demographics (unbiased)
+│   ├── mxl_basic/                       # MXL random coefficients
+│   ├── hcm_basic/                       # HCM single LV (attenuation)
+│   ├── hcm_full/                        # HCM all 4 LVs (attenuation)
+│   └── iclv/                            # ICLV simultaneous (unbiased)
 │
 ├── tests/                               # Test suite
 │
@@ -250,7 +288,7 @@ from src.models.mnl_basic import estimate_mnl_basic
 
 result = estimate_mnl_basic(
     data_path='data/simulated/full_scale_test.csv',
-    config_path='config/model_config_advanced.json',
+    config_path='config/model_config.json',
     output_dir='results/all_models'
 )
 print(f"Log-likelihood: {result['log_likelihood']:.2f}")
@@ -325,7 +363,7 @@ python scripts/run_all_models.py
 
 ## Configuration
 
-### model_config_advanced.json
+### model_config.json
 
 ```json
 {

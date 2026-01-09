@@ -24,7 +24,11 @@ class TestCFAEstimation:
         df = sample_choice_data.copy()
         individuals = df.groupby('ID').first().reset_index()
 
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Use unified naming: patriotism_1-10 for blind patriotism
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in individuals.columns]
+        # Fallback to old naming if new naming not present
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         X = individuals[items].values
 
         # Calculate item-total correlations
@@ -48,7 +52,10 @@ class TestCFAEstimation:
         df = sample_choice_data.copy()
         individuals = df.groupby('ID').first().reset_index()
 
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Use unified naming: patriotism_1-10 for blind patriotism
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in individuals.columns]
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         X = individuals[items].values
 
         # Weighted sum
@@ -71,7 +78,10 @@ class TestCFAEstimation:
         df = sample_choice_data.copy()
         individuals = df.groupby('ID').first().reset_index()
 
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Use unified naming: patriotism_1-10 for blind patriotism
+        items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in individuals.columns]
+        if not items:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
         X = individuals[items].values
 
         # Simple mean
@@ -91,10 +101,19 @@ class TestLVCorrelations:
         df = sample_choice_data.copy()
         individuals = df.groupby('ID').first().reset_index()
 
-        # Create LV proxies
+        # Create LV proxies with unified naming
+        pat_items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in individuals.columns]
+        sec_items = [f'secularism_{i}' for i in range(1, 5) if f'secularism_{i}' in individuals.columns]
+
+        # Fallback to old naming if new naming not present
+        if not pat_items:
+            pat_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        if not sec_items:
+            sec_items = ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4']
+
         constructs = {
-            'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-            'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
+            'pat_blind': pat_items,
+            'sec_dl': sec_items,
         }
 
         for name, items in constructs.items():
@@ -110,11 +129,27 @@ class TestLVCorrelations:
         df = sample_choice_data.copy()
         individuals = df.groupby('ID').first().reset_index()
 
+        # Use unified naming with fallback to old naming
+        pat_blind_items = [f'patriotism_{i}' for i in range(1, 5) if f'patriotism_{i}' in individuals.columns]
+        pat_const_items = [f'patriotism_{i}' for i in range(11, 15) if f'patriotism_{i}' in individuals.columns]
+        sec_dl_items = [f'secularism_{i}' for i in range(1, 5) if f'secularism_{i}' in individuals.columns]
+        sec_fp_items = [f'secularism_{i}' for i in range(16, 20) if f'secularism_{i}' in individuals.columns]
+
+        # Fallback to old naming
+        if not pat_blind_items:
+            pat_blind_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        if not pat_const_items:
+            pat_const_items = ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4']
+        if not sec_dl_items:
+            sec_dl_items = ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4']
+        if not sec_fp_items:
+            sec_fp_items = ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4']
+
         constructs = {
-            'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-            'pat_const': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-            'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-            'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
+            'pat_blind': pat_blind_items,
+            'pat_const': pat_const_items,
+            'sec_dl': sec_dl_items,
+            'sec_fp': sec_fp_items,
         }
 
         for name, items in constructs.items():

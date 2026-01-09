@@ -1,0 +1,284 @@
+{
+  "population": {
+    "N": 500,
+    "T": 100,
+    "seed": 123
+  },
+  "design": {
+    "path": "data/raw/scenarios_prepared.csv",
+    "sample_without_replacement": true
+  },
+  "measurement": {
+    "items_path": "config/items_config.csv",
+    "thresholds": [
+      -1.0,
+      -0.35,
+      0.35,
+      1.0
+    ]
+  },
+  "demographics": {
+    "age_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "probs": [
+        0.1,
+        0.35,
+        0.3,
+        0.2,
+        0.05
+      ]
+    },
+    "edu_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "probs": [
+        0.02,
+        0.2,
+        0.15,
+        0.45,
+        0.15,
+        0.03
+      ]
+    },
+    "income_indiv_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "probs": [
+        0.2,
+        0.2,
+        0.18,
+        0.14,
+        0.1,
+        0.08,
+        0.06,
+        0.04
+      ]
+    },
+    "income_house_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "probs": [
+        0.1,
+        0.12,
+        0.15,
+        0.16,
+        0.15,
+        0.12,
+        0.1,
+        0.1
+      ]
+    },
+    "work_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "probs": [
+        0.45,
+        0.1,
+        0.1,
+        0.1,
+        0.2,
+        0.05
+      ]
+    },
+    "marital_idx": {
+      "type": "categorical",
+      "values": [
+        0,
+        1,
+        2
+      ],
+      "probs": [
+        0.75,
+        0.22,
+        0.03
+      ]
+    },
+    "hh_size": {
+      "type": "categorical",
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "probs": [
+        0.05,
+        0.2,
+        0.3,
+        0.25,
+        0.2
+      ]
+    },
+    "hh_earners": {
+      "type": "categorical",
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "probs": [
+        0.15,
+        0.45,
+        0.25,
+        0.1,
+        0.05
+      ]
+    }
+  },
+  "latent": {
+    "names": [
+      "pat_blind",
+      "pat_constructive",
+      "sec_dl",
+      "sec_fp"
+    ],
+    "domain_mapping": {
+      "patriotism": {
+        "items_range": [1, 20],
+        "subconstructs": {
+          "pat_blind": [1, 10],
+          "pat_constructive": [11, 20]
+        }
+      },
+      "secularism": {
+        "items_range": [1, 25],
+        "subconstructs": {
+          "sec_dl": [1, 15],
+          "sec_fp": [16, 25]
+        }
+      }
+    },
+    "reverse_items": {
+      "patriotism": [5, 7, 12],
+      "secularism": [1, 13]
+    },
+    "structural": {
+      "pat_blind": {
+        "intercept": 0.0,
+        "betas": {
+          "age_idx": 0.20,
+          "income_indiv_idx": -0.15
+        },
+        "sigma": 1.0,
+        "_note": "Increased betas for stronger structural effects (target R² ~0.2)"
+      },
+      "pat_constructive": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.25
+        },
+        "sigma": 1.0
+      },
+      "sec_dl": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.18,
+          "income_indiv_idx": 0.12
+        },
+        "sigma": 1.0
+      },
+      "sec_fp": {
+        "intercept": 0.0,
+        "betas": {
+          "edu_idx": 0.20
+        },
+        "sigma": 1.0
+      }
+    }
+  },
+  "choice_model": {
+    "_note_interaction_effects": "WEAK INTERACTION COEFFICIENTS: Interaction effects (0.02-0.12) are intentionally small relative to base coefficients (-0.8 fee, -0.08 dur). This is realistic for DCM research but means: (1) Large samples needed for precise estimation, (2) Standard errors may exceed coefficient magnitudes, (3) May appear insignificant despite being true effects. Consider increasing coefficients 2-3x for clearer recovery in validation studies.",
+    "fee_scale": 10000.0,
+    "alts": { "1": "paid1", "2": "paid2", "3": "standard" },
+    "base_terms": [
+      { "name": "ASC_paid", "apply_to": ["paid1", "paid2"], "term": "const", "coef": 1.5 },
+      { "name": "ASC_std",  "apply_to": ["standard"],      "term": "const", "coef": 0.00 }
+    ],
+    "attribute_terms": [
+      {
+        "name": "b_fee_scaled",
+        "apply_to": ["paid1", "paid2"],
+        "term": "fee_scaled",
+        "base_coef": -0.008,
+        "_note_fee_coef": "Coefficient scaled for fee_scale=10000. With mean fee ~700k TL, scaled fee ~70, utility contrib = -0.008*70 = -0.56",
+        "enforce_sign": "negative",
+        "interactions": [
+          { "with": "age_idx",          "coef": 0.0006, "enforce_sign": "positive", "center": 2.0, "scale": 2.0 },
+          { "with": "edu_idx",          "coef": 0.0008, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_indiv_idx", "coef": 0.0012, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+          { "with": "income_house_idx", "coef": 0.0006, "enforce_sign": "positive", "center": 3.0, "scale": 2.0 },
+
+          { "with": "pat_blind",        "coef": -0.0010, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "pat_constructive", "coef": -0.0004, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_dl",           "coef": 0.0005,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_fp",           "coef": 0.0004,  "enforce_sign": "positive", "center": 0.0, "scale": 1.0 }
+
+
+        ]
+      },
+    
+      {
+        "name": "b_dur",
+        "apply_to": ["paid1", "paid2", "standard"],
+        "term": "dur",
+        "base_coef": -0.08,
+        "enforce_sign": "negative",
+        "interactions": [
+          { "with": "edu_idx",          "coef": -0.04, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "income_indiv_idx", "coef": -0.03, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "income_house_idx", "coef": -0.02, "enforce_sign": "negative", "center": 3.0, "scale": 2.0 },
+          { "with": "marital_idx",      "coef": -0.03, "enforce_sign": "negative", "center": 0.5, "scale": 0.5 },
+    
+          { "with": "pat_blind",        "coef": 0.06, "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "pat_constructive", "coef": 0.04, "enforce_sign": "positive", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_dl",           "coef": -0.05, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 },
+          { "with": "sec_fp",           "coef": -0.04, "enforce_sign": "negative", "center": 0.0, "scale": 1.0 }
+        ]
+      }
+    ]
+    
+  }
+  
+}

@@ -108,13 +108,12 @@ class TestMNLParameterRecovery:
         # Estimate
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'mnl_recovery_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
         # Check convergence
-        assert results.algorithm_has_converged(), "MNL estimation did not converge"
+        assert results.algorithm_has_converged, "MNL estimation did not converge"
 
         # Validate parameter recovery
         params_to_check = {
@@ -123,8 +122,8 @@ class TestMNLParameterRecovery:
             'B_DUR': TRUE_PARAMS['B_DUR'],
         }
 
-        betas = results.getBetaValues()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         recovery_results = []
         for param_name, true_val in params_to_check.items():
@@ -196,11 +195,10 @@ class TestMNLParameterRecovery:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'sign_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
-        betas = results.getBetaValues()
+        betas = results.get_beta_values()
 
         assert betas['B_FEE'] < 0, f"B_FEE should be negative, got {betas['B_FEE']:.4f}"
         assert betas['B_DUR'] < 0, f"B_DUR should be negative, got {betas['B_DUR']:.4f}"
@@ -232,8 +230,8 @@ class TestHCMParameterRecovery:
         df['fee2_10k'] = df['fee2'] / 10000.0
         df['fee3_10k'] = df['fee3'] / 10000.0
 
-        # Create LV proxy from Likert items
-        lv_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create LV proxy from Likert items (new unified naming: patriotism_1-10)
+        lv_items = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
         proxy = df[lv_items].mean(axis=1)
         df['pat_blind_proxy'] = (proxy - proxy.mean()) / proxy.std()
 
@@ -265,14 +263,13 @@ class TestHCMParameterRecovery:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'hcm_proxy_test'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
-        assert results.algorithm_has_converged(), "HCM estimation did not converge"
+        assert results.algorithm_has_converged, "HCM estimation did not converge"
 
-        betas = results.getBetaValues()
+        betas = results.get_beta_values()
 
         # Basic sign checks
         assert betas['B_FEE'] < 0, f"B_FEE should be negative"
@@ -297,7 +294,9 @@ class TestMeasurementModelValidation:
         """Likert responses should have reasonable distribution (not all same value)."""
         df = large_synthetic_data
 
-        for col in ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']:
+        # Check patriotism items (new unified naming)
+        for i in range(1, 11):
+            col = f'patriotism_{i}'
             if col in df.columns:
                 unique_values = df[col].nunique()
                 assert unique_values >= 3, f"{col} has only {unique_values} unique values"
@@ -314,8 +313,8 @@ class TestMeasurementModelValidation:
         if 'pat_blind_true' not in df.columns:
             pytest.skip("True LV values not in data")
 
-        # Create proxy
-        lv_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create proxy (new unified naming: patriotism_1-10 for blind patriotism)
+        lv_items = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
         proxy = df[lv_items].mean(axis=1)
 
         # Get unique individuals (first row per ID)
@@ -380,11 +379,11 @@ class TestStatisticalProperties:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'se_validation'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         for param, se in std_errs.items():
             assert se > 0, f"{param}: SE should be positive, got {se}"
@@ -429,13 +428,12 @@ class TestStatisticalProperties:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'tstat_validation'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
-        betas = results.getBetaValues()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         print("\nT-statistics:")
         print("-" * 50)

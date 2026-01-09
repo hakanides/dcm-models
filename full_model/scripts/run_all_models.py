@@ -66,6 +66,7 @@ CONFIG KEYS (model_config.json):
 The compare_to_true() function maps between these naming conventions.
 """
 
+import argparse
 import numpy as np
 import pandas as pd
 import json
@@ -187,6 +188,75 @@ except ImportError:
 
 
 # =============================================================================
+# MODEL REGISTRY FOR CLI SELECTION
+# =============================================================================
+# Maps model IDs to their functions and metadata for selective execution
+
+MODEL_REGISTRY = {
+    'mnl_basic': {
+        'func': 'model_mnl_basic',
+        'type': 'mnl',
+        'desc': 'Basic MNL (ASC + fee + duration)'
+    },
+    'mnl_demographics': {
+        'func': 'model_mnl_demographics',
+        'type': 'mnl',
+        'desc': 'MNL + demographic interactions'
+    },
+    'mnl_full': {
+        'func': 'model_mnl_full',
+        'type': 'mnl',
+        'desc': 'MNL + demographics + LV proxies'
+    },
+    'mxl_random_fee': {
+        'func': 'model_mxl_random_fee',
+        'type': 'mxl',
+        'desc': 'MXL with random fee coefficient'
+    },
+    'mxl_random_both': {
+        'func': 'model_mxl_random_both',
+        'type': 'mxl',
+        'desc': 'MXL with random fee + duration'
+    },
+    'hcm_basic': {
+        'func': 'run_hcm_basic',
+        'type': 'hcm',
+        'desc': 'HCM with pat_blind only'
+    },
+    'hcm_full': {
+        'func': 'run_hcm_full',
+        'type': 'hcm',
+        'desc': 'HCM with all 4 latent variables'
+    },
+}
+
+
+def list_available_models():
+    """Print available models and exit."""
+    print("\n" + "=" * 65)
+    print("AVAILABLE MODELS")
+    print("=" * 65)
+
+    # Group by type
+    for model_type in ['mnl', 'mxl', 'hcm']:
+        type_models = {k: v for k, v in MODEL_REGISTRY.items() if v['type'] == model_type}
+        if type_models:
+            print(f"\n{model_type.upper()} Models:")
+            print("-" * 40)
+            for model_id, info in type_models.items():
+                print(f"  {model_id:<20} {info['desc']}")
+
+    print("\n" + "-" * 65)
+    print("Model Types: mnl, mxl, hcm, all")
+    print("\nUsage Examples:")
+    print("  python scripts/run_all_models.py --list-models")
+    print("  python scripts/run_all_models.py --data data.csv --model mnl_basic")
+    print("  python scripts/run_all_models.py --data data.csv --model-type mnl")
+    print("  python scripts/run_all_models.py --data data.csv  # runs all models")
+    print("=" * 65 + "\n")
+
+
+# =============================================================================
 # CLEANUP FUNCTIONS
 # =============================================================================
 
@@ -213,7 +283,7 @@ def cleanup_iter_files(project_root: Path = None):
 # LOAD TRUE PARAMETERS FROM CONFIG
 # =============================================================================
 
-def load_true_params(config_path: str = "config/model_config_advanced.json") -> dict:
+def load_true_params(config_path: str = "config/model_config.json") -> dict:
     """Load true parameter values from config."""
     with open(config_path) as f:
         config = json.load(f)
@@ -242,7 +312,7 @@ def load_true_params(config_path: str = "config/model_config_advanced.json") -> 
 # DATA PREPARATION
 # =============================================================================
 
-def load_centering_config(config_path: str = "config/model_config_advanced.json") -> dict:
+def load_centering_config(config_path: str = "config/model_config.json") -> dict:
     """Extract centering/scaling parameters from config for validation."""
     with open(config_path) as f:
         config = json.load(f)
@@ -259,7 +329,7 @@ def load_centering_config(config_path: str = "config/model_config_advanced.json"
     return centering
 
 
-def prepare_data(data_path: str, config_path: str = "config/model_config_advanced.json"):
+def prepare_data(data_path: str, config_path: str = "config/model_config.json"):
     """Load and prepare data for all models.
 
     IMPORTANT: Centering and scaling MUST match model_config.json exactly!
@@ -283,6 +353,14 @@ def prepare_data(data_path: str, config_path: str = "config/model_config_advance
     df['fee1_10k'] = df['fee1'] / FEE_SCALE
     df['fee2_10k'] = df['fee2'] / FEE_SCALE
     df['fee3_10k'] = df['fee3'] / FEE_SCALE
+
+    # Scale duration by 10 to match fee scale magnitude
+    # Raw duration: 1-24 days, std ~6.5
+    # After scaling: 0.1-2.4, std ~0.65 (comparable to fee_10k std ~86 after coef adjustment)
+    DUR_SCALE = 10.0
+    df['dur1_10'] = df['dur1'] / DUR_SCALE
+    df['dur2_10'] = df['dur2'] / DUR_SCALE
+    df['dur3_10'] = df['dur3'] / DUR_SCALE
 
     # Load centering config for validation
     centering_config = load_centering_config(config_path)
@@ -319,11 +397,19 @@ def prepare_data(data_path: str, config_path: str = "config/model_config_advance
     # Create Likert proxies (standardized)
     # NOTE: Standardization uses sample mean/std. For out-of-sample prediction,
     # you must save these parameters and apply them consistently.
+    # Use unified naming with fallback to legacy naming
+    def get_lv_items(df, domain, start, end, fallback_prefix):
+        """Get items for latent variable with fallback to old naming."""
+        unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+        if unified:
+            return unified
+        return [c for c in df.columns if c.startswith(fallback_prefix) and c[-1].isdigit()][:4]
+
     lv_items = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'pat_const': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-        'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
+        'pat_blind': get_lv_items(df, 'patriotism', 1, 10, 'pat_blind_'),
+        'pat_const': get_lv_items(df, 'patriotism', 11, 20, 'pat_constructive_'),
+        'sec_dl': get_lv_items(df, 'secularism', 1, 15, 'sec_dl_'),
+        'sec_fp': get_lv_items(df, 'secularism', 16, 25, 'sec_fp_'),
     }
 
     # Store standardization parameters for reproducibility and out-of-sample prediction
@@ -483,24 +569,15 @@ def compute_adaptive_starting_values(df_num: pd.DataFrame) -> dict:
 
     Example usage:
         start_vals = compute_adaptive_starting_values(df_num)
-        B_FEE = Beta('B_FEE', start_vals.get('B_FEE', -0.5), -10, 0, 0)
+        B_FEE = Beta('B_FEE', start_vals.get('B_FEE', -0.05), -1, 0, 0)
     """
     starting_values = {}
 
     # Fee coefficient: rough estimate from utility difference
-    # If paid alternatives have higher fees but are still chosen,
-    # the ASC must be large or fee sensitivity must be small
+    # True value is around -0.035 to -0.05 (fee scaled by 10k)
     if 'fee1_10k' in df_num.columns:
-        avg_fee_diff = df_num['fee1_10k'].mean() - df_num['fee3_10k'].mean()
-        # Rough estimate: if fee diff is X and choice shares are equal,
-        # fee coefficient must be roughly offset by ASC/X
-        if avg_fee_diff != 0:
-            # Very rough: assume -0.5 per unit scaled fee is reasonable
-            # Scale based on actual fee range
-            fee_range = df_num['fee1_10k'].std()
-            starting_values['B_FEE'] = -0.5 / max(fee_range, 0.1)
-        else:
-            starting_values['B_FEE'] = -0.5
+        # Use realistic starting value based on observed estimates
+        starting_values['B_FEE'] = -0.05
 
     # Duration coefficient: similar logic
     if 'dur1' in df_num.columns:
@@ -553,7 +630,7 @@ def model_mnl_basic(database):
     ISSUE #23 NOTE: ASC Values in Different Configs
     ===============================================
     - model_config.json: ASC = 1.5 (simple validation setup)
-    - model_config_advanced.json: ASC = 0.25 (realistic HCM setup)
+    - model_config.json: ASC = 0.25 (realistic HCM setup)
 
     This is INTENTIONAL - different configs serve different purposes:
     - Basic config (ASC=1.5): Strong preference for paid alternatives,
@@ -563,13 +640,17 @@ def model_mnl_basic(database):
 
     Always match your estimation to the config used for data generation!
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
 
-    ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)  # Bounded negative
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    # ASC_paid: preference for paid alternatives over standard
+    ASC_paid = Beta('ASC_paid', 2.0, None, None, 0)
+    # B_FEE: fee coefficient (expected negative - higher fee = lower utility)
+    B_FEE = Beta('B_FEE', -0.05, None, None, 0)
+    # B_DUR: duration coefficient (sign depends on context - may be positive in real data)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)
 
     V1 = ASC_paid + B_FEE * fee1 + B_DUR * dur1
     V2 = ASC_paid + B_FEE * fee2 + B_DUR * dur2
@@ -627,6 +708,7 @@ def model_mnl_demographics(database):
     BOUNDS NOTE: Interaction bounds [-1, 1] chosen to prevent total coefficient
     from becoming positive even at extreme demographic values (centered range ±2).
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
@@ -634,7 +716,7 @@ def model_mnl_demographics(database):
     inc_hh_c, marital_c = Variable('inc_hh_c'), Variable('marital_c')
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)  # Bounded negative
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)  # Bounded negative, realistic start
 
     # Interaction bounds [-1, 1]: with 4 interactions and demographics ±2,
     # max contribution is 4*1*2=8, so B_FEE_i in [-10-8, 0+8] = [-18, 8]
@@ -644,7 +726,8 @@ def model_mnl_demographics(database):
     B_FEE_INC = Beta('B_FEE_INC', 0.10, -1, 1, 0)
     B_FEE_INC_H = Beta('B_FEE_INC_H', 0.05, -1, 1, 0)
 
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)  # No bounds - allow positive for real data
     B_DUR_EDU = Beta('B_DUR_EDU', -0.02, -0.5, 0.5, 0)
     B_DUR_INC = Beta('B_DUR_INC', -0.02, -0.5, 0.5, 0)
     B_DUR_INC_H = Beta('B_DUR_INC_H', -0.01, -0.5, 0.5, 0)
@@ -667,6 +750,7 @@ def model_mnl_full(database):
 
     BOUNDS NOTE: Tighter interaction bounds to prevent implausible total coefficients.
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
@@ -677,7 +761,7 @@ def model_mnl_full(database):
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
 
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)  # Bounded negative
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)  # Bounded negative, realistic start
     # Tighter bounds [-0.5, 0.5] for interactions to prevent positive total fee coefficient
     B_FEE_AGE = Beta('B_FEE_AGE', 0.05, -0.5, 0.5, 0)
     B_FEE_EDU = Beta('B_FEE_EDU', 0.05, -0.5, 0.5, 0)
@@ -688,7 +772,8 @@ def model_mnl_full(database):
     B_FEE_SEC_D = Beta('B_FEE_SEC_D', 0.02, -0.5, 0.5, 0)
     B_FEE_SEC_F = Beta('B_FEE_SEC_F', 0.02, -0.5, 0.5, 0)
 
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)  # No bounds - allow positive for real data
     B_DUR_EDU = Beta('B_DUR_EDU', -0.02, -0.5, 0.5, 0)
     B_DUR_INC = Beta('B_DUR_INC', -0.02, -0.5, 0.5, 0)
     B_DUR_INC_H = Beta('B_DUR_INC_H', -0.01, -0.5, 0.5, 0)
@@ -717,7 +802,7 @@ def model_mnl_full(database):
 # =============================================================================
 # NOTE: MXL estimates random coefficient heterogeneity (σ parameters).
 # If using model_config.json (no random coefficients), σ will be ≈ 0.
-# Use model_config_advanced.json to generate data with true random coefficients.
+# Use model_config.json to generate data with true random coefficients.
 #
 # ISSUE #29: CORRELATED RANDOM COEFFICIENTS
 # =========================================
@@ -745,14 +830,16 @@ def model_mxl_random_fee(database):
     NOTE: σ will be ~0 if data generated without random coefficients.
     Uses PanelLikelihoodTrajectory for panel data (same draws across choice situations).
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)  # No bounds - allow positive for real data
 
-    B_FEE_MU = Beta('B_FEE_MU', -0.5, -10, 0, 0)  # Bounded negative
+    B_FEE_MU = Beta('B_FEE_MU', -0.05, -1, 0, 0)  # Bounded negative, realistic start
     # Sigma bounded [0.001, 1.5]: with μ=-0.5, 3σ range is [-5, +4]
     # Upper bound 1.5 allows heterogeneity while keeping most draws negative
     B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.2, 0.001, 1.5, 0)  # Bounded positive, realistic
@@ -775,18 +862,20 @@ def model_mxl_random_both(database):
 
     Uses PanelLikelihoodTrajectory for panel data (same draws across choice situations).
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
 
-    B_FEE_MU = Beta('B_FEE_MU', -0.5, -10, 0, 0)  # Bounded negative
+    B_FEE_MU = Beta('B_FEE_MU', -0.05, -1, 0, 0)  # Bounded negative, realistic start
     # Sigma bounded realistically to avoid implausible heterogeneity
     B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.2, 0.001, 1.5, 0)  # Bounded positive, realistic
-    B_DUR_MU = Beta('B_DUR_MU', -0.05, -5, 0, 0)  # Bounded negative
-    # Duration sigma: with μ=-0.05, σ=0.5 gives range [-1.55, +1.45], reasonable
-    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.02, 0.001, 0.5, 0)  # Bounded positive, realistic
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR_MU = Beta('B_DUR_MU', 0.0, None, None, 0)  # No bounds - allow positive for real data
+    # Duration sigma bounded accordingly
+    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.02, 0.001, 0.5, 0)  # Bounded positive
 
     B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
     B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * bioDraws('B_DUR_RND', 'NORMAL')
@@ -854,6 +943,7 @@ def model_hcm_basic(database):
     estimates, consider ICLV (Integrated Choice and Latent Variable) models
     that jointly estimate the measurement and structural models.
     """
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
@@ -861,13 +951,14 @@ def model_hcm_basic(database):
     sec_dl = Variable('sec_dl_proxy')
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)  # Bounded negative
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)  # Bounded negative, realistic start
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)  # No bounds - allow positive for real data
 
     # Latent variable interactions
     B_FEE_PAT = Beta('B_FEE_PAT', -0.05, -2, 2, 0)
     B_FEE_SEC = Beta('B_FEE_SEC', 0.02, -2, 2, 0)
-    B_DUR_PAT = Beta('B_DUR_PAT', 0.02, -1, 1, 0)
+    B_DUR_PAT = Beta('B_DUR_PAT', 0.02, -1, 1, 0)  # Raw duration interaction bounds
     B_DUR_SEC = Beta('B_DUR_SEC', -0.02, -1, 1, 0)
 
     B_FEE_i = B_FEE + B_FEE_PAT * pat_blind + B_FEE_SEC * sec_dl
@@ -884,6 +975,7 @@ def model_hcm_basic(database):
 
 def model_hcm_full(database):
     """HCM with all 4 latent variable proxies."""
+    # Use raw duration (matching simulation)
     dur1, dur2, dur3 = Variable('dur1'), Variable('dur2'), Variable('dur3')
     fee1, fee2, fee3 = Variable('fee1_10k'), Variable('fee2_10k'), Variable('fee3_10k')
     CHOICE = Variable('CHOICE')
@@ -893,8 +985,9 @@ def model_hcm_full(database):
     sec_fp = Variable('sec_fp_proxy')
 
     ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)  # Bounded negative
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)  # Bounded negative, realistic start
+    # B_DUR: true value -0.08 per day (bounded negative due to fee-duration correlation)
+    B_DUR = Beta('B_DUR', 0.0, None, None, 0)  # No bounds - allow positive for real data
 
     # Fee interactions with all LVs
     B_FEE_PAT_B = Beta('B_FEE_PAT_B', -0.05, -2, 2, 0)
@@ -902,8 +995,8 @@ def model_hcm_full(database):
     B_FEE_SEC_D = Beta('B_FEE_SEC_D', 0.02, -2, 2, 0)
     B_FEE_SEC_F = Beta('B_FEE_SEC_F', 0.02, -2, 2, 0)
 
-    # Duration interactions
-    B_DUR_PAT_B = Beta('B_DUR_PAT_B', 0.02, -1, 1, 0)
+    # Duration interactions (raw)
+    B_DUR_PAT_B = Beta('B_DUR_PAT_B', 0.02, -1, 1, 0)  # Raw duration interaction bounds
     B_DUR_SEC_D = Beta('B_DUR_SEC_D', -0.02, -1, 1, 0)
 
     B_FEE_i = B_FEE + B_FEE_PAT_B*pat_blind + B_FEE_PAT_C*pat_const + B_FEE_SEC_D*sec_dl + B_FEE_SEC_F*sec_fp
@@ -1226,19 +1319,20 @@ def compare_to_true(result, true_params, min_true_value: float = 0.01):
     Returns:
         DataFrame with parameter comparison
     """
-    # Parameter name mapping - ISSUE #25: explicit mapping with patterns
+    # Parameter name mapping - matches config's attribute_terms names
+    # Config uses b_fee10k (term: fee10k) and b_dur (term: dur)
     mapping = {
         'ASC_paid': 'ASC_paid',
-        'B_FEE': 'b_fee_scaled_base',
-        'B_FEE_MU': 'b_fee_scaled_base',
-        'B_FEE_AGE': 'b_fee_scaled_x_age_idx',
-        'B_FEE_EDU': 'b_fee_scaled_x_edu_idx',
-        'B_FEE_INC': 'b_fee_scaled_x_income_indiv_idx',
-        'B_FEE_INC_H': 'b_fee_scaled_x_income_house_idx',
-        'B_FEE_PAT_B': 'b_fee_scaled_x_pat_blind',
-        'B_FEE_PAT_C': 'b_fee_scaled_x_pat_constructive',
-        'B_FEE_SEC_D': 'b_fee_scaled_x_sec_dl',
-        'B_FEE_SEC_F': 'b_fee_scaled_x_sec_fp',
+        'B_FEE': 'b_fee10k_base',
+        'B_FEE_MU': 'b_fee10k_base',
+        'B_FEE_AGE': 'b_fee10k_x_age_idx',
+        'B_FEE_EDU': 'b_fee10k_x_edu_idx',
+        'B_FEE_INC': 'b_fee10k_x_income_indiv_idx',
+        'B_FEE_INC_H': 'b_fee10k_x_income_house_idx',
+        'B_FEE_PAT_B': 'b_fee10k_x_pat_blind',
+        'B_FEE_PAT_C': 'b_fee10k_x_pat_constructive',
+        'B_FEE_SEC_D': 'b_fee10k_x_sec_dl',
+        'B_FEE_SEC_F': 'b_fee10k_x_sec_fp',
         'B_DUR': 'b_dur_base',
         'B_DUR_MU': 'b_dur_base',
         'B_DUR_EDU': 'b_dur_x_edu_idx',
@@ -1312,15 +1406,54 @@ def compare_to_true(result, true_params, min_true_value: float = 0.01):
 
     return pd.DataFrame(comparison)
 
-def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
-    """Run all models and compare to true parameters."""
+def run_all_models(
+    data_path: str = "data/simulated/full_scale_test.csv",
+    output_dir: str = "results/all_models",
+    selected_models: list = None,
+    model_type: str = 'all'
+):
+    """
+    Run DCM models with optional model selection.
+
+    Args:
+        data_path: Path to data CSV file
+        output_dir: Output directory for results
+        selected_models: List of specific model IDs to run (None = use model_type)
+        model_type: Type of models to run ('mnl', 'mxl', 'hcm', 'all')
+    """
+    # Determine which models to run
+    if selected_models:
+        models_to_run = selected_models
+        # Validate model IDs
+        invalid = [m for m in models_to_run if m not in MODEL_REGISTRY]
+        if invalid:
+            print(f"ERROR: Unknown model(s): {invalid}")
+            print("Use --list-models to see available models.")
+            sys.exit(1)
+    elif model_type == 'all':
+        models_to_run = list(MODEL_REGISTRY.keys())
+    else:
+        models_to_run = [m for m, info in MODEL_REGISTRY.items()
+                         if info['type'] == model_type]
+
+    # Group models by type for reporting
+    run_mnl = [m for m in models_to_run if MODEL_REGISTRY[m]['type'] == 'mnl']
+    run_mxl = [m for m in models_to_run if MODEL_REGISTRY[m]['type'] == 'mxl']
+    run_hcm = [m for m in models_to_run if MODEL_REGISTRY[m]['type'] == 'hcm']
 
     print("="*80)
     print("COMPREHENSIVE MODEL VALIDATION")
     print("="*80)
+    print(f"\nModels to run: {models_to_run}")
+    if run_mnl:
+        print(f"  MNL: {run_mnl}")
+    if run_mxl:
+        print(f"  MXL: {run_mxl}")
+    if run_hcm:
+        print(f"  HCM: {run_hcm}")
 
     # Setup output directory and cleanup
-    output_dir = Path("results/all_models")
+    output_dir = Path(output_dir)
     cleanup_iter_files()  # Delete .iter files from project root
     cleanup_results_directory(output_dir)  # Clean and recreate output directory
     cleanup_latex_output()  # Clean and recreate latex_output directory
@@ -1342,12 +1475,14 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
     print("\nGenerating simulation LaTeX outputs...")
     generate_all_simulation_latex(df)
 
-    # Define models to run
+    # Define all models with their IDs for filtering
     mnl_models = [
-        (model_mnl_basic, None),
-        (model_mnl_demographics, None),
-        (model_mnl_full, None),
+        ('mnl_basic', model_mnl_basic, None),
+        ('mnl_demographics', model_mnl_demographics, None),
+        ('mnl_full', model_mnl_full, None),
     ]
+    # Filter based on selection
+    mnl_models = [(mid, func, draws) for mid, func, draws in mnl_models if mid in run_mnl]
 
     # MXL Configuration
     # Set PRODUCTION_MODE = True for publication-quality results (slower)
@@ -1373,20 +1508,23 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
     mxl_models = [
         # MXL with panel data is computationally intensive
         # Uses 5000 draws in production mode, 1000 in dev mode
-        (model_mxl_random_fee, MXL_DRAWS),
-        (model_mxl_random_both, MXL_DRAWS),
+        ('mxl_random_fee', model_mxl_random_fee, MXL_DRAWS),
+        ('mxl_random_both', model_mxl_random_both, MXL_DRAWS),
     ]
+    # Filter based on selection
+    mxl_models = [(mid, func, draws) for mid, func, draws in mxl_models if mid in run_mxl]
 
     all_results = []
     baseline_result = None  # For warm-start chain
 
     # Run MNL models with warm-start chain
-    print("\n" + "="*80)
-    print("MNL MODELS")
-    print("="*80)
+    if mnl_models:
+        print("\n" + "="*80)
+        print("MNL MODELS")
+        print("="*80)
 
     previous_result = None
-    for model_func, n_draws in mnl_models:
+    for model_id, model_func, n_draws in mnl_models:
         print(f"\nEstimating {model_func.__name__}...")
         try:
             # Use warm-start from previous model if available
@@ -1430,14 +1568,15 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
     # Run MXL models
     # NOTE: MXL requires panel structure to properly account for repeated
     # observations by the same individual. Create separate database with panel ID.
-    print("\n" + "="*80)
-    print("MXL (MIXED LOGIT) MODELS")
-    print("="*80)
-    print("Creating panel-aware database for MXL...")
-    mxl_database = prepare_mxl_database(df)
+    if mxl_models:
+        print("\n" + "="*80)
+        print("MXL (MIXED LOGIT) MODELS")
+        print("="*80)
+        print("Creating panel-aware database for MXL...")
+        mxl_database = prepare_mxl_database(df)
 
     previous_mxl_result = None
-    for model_func, n_draws in mxl_models:
+    for model_id, model_func, n_draws in mxl_models:
         print(f"\nEstimating {model_func.__name__} (draws={n_draws})...")
         try:
             # Use warm-start from baseline MNL or previous MXL
@@ -1476,47 +1615,60 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
             print(f"  ERROR: {e}")
 
     # Run HCM models
-    print("\n" + "="*80)
-    print("HCM (HYBRID CHOICE) MODELS")
-    print("="*80)
+    if run_hcm:
+        print("\n" + "="*80)
+        print("HCM (HYBRID CHOICE) MODELS")
+        print("="*80)
 
     # Compute and report reliability (Cronbach's alpha) for LV proxies
     # This is critical for understanding attenuation bias
-    lv_items_for_alpha = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'pat_const': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-        'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
-    }
+    # Only compute if HCM models are being run
+    if run_hcm:
+        # Use unified naming with fallback to legacy naming
+        def get_lv_items_alpha(df, domain, start, end, fallback_prefix):
+            """Get items for latent variable with fallback to old naming."""
+            unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+            if unified:
+                return unified
+            return [c for c in df.columns if c.startswith(fallback_prefix) and c[-1].isdigit()][:4]
 
-    # Use original df for alpha computation (df_num dropped some columns)
-    df_for_alpha = df  # df still has Likert columns needed for reliability
+        lv_items_for_alpha = {
+            'pat_blind': get_lv_items_alpha(df, 'patriotism', 1, 10, 'pat_blind_'),
+            'pat_const': get_lv_items_alpha(df, 'patriotism', 11, 20, 'pat_constructive_'),
+            'sec_dl': get_lv_items_alpha(df, 'secularism', 1, 15, 'sec_dl_'),
+            'sec_fp': get_lv_items_alpha(df, 'secularism', 16, 25, 'sec_fp_'),
+        }
 
-    print("\nLATENT VARIABLE RELIABILITY (Cronbach's Alpha):")
-    print("-" * 50)
-    reliability_info = {}
-    for lv_name, items in lv_items_for_alpha.items():
-        alpha = compute_cronbach_alpha(df_for_alpha, items)
-        reliability_info[lv_name] = alpha
-        if pd.notna(alpha):
-            attenuation = (1 - alpha) * 100
-            print(f"  {lv_name}: α = {alpha:.3f} (LV effects attenuated ~{attenuation:.0f}%)")
-        else:
-            print(f"  {lv_name}: α = N/A (insufficient items)")
+        # Use original df for alpha computation (df_num dropped some columns)
+        df_for_alpha = df  # df still has Likert columns needed for reliability
 
-    print("\n⚠️  ATTENUATION BIAS WARNING:")
-    print("   Two-stage HCM using proxy scores underestimates LV effects.")
-    print("   True effect ≈ estimated / reliability")
-    print("   For unbiased estimates, use full ICLV (joint estimation).")
-    print("-" * 50)
+        print("\nLATENT VARIABLE RELIABILITY (Cronbach's Alpha):")
+        print("-" * 50)
+        reliability_info = {}
+        for lv_name, items in lv_items_for_alpha.items():
+            alpha = compute_cronbach_alpha(df_for_alpha, items)
+            reliability_info[lv_name] = alpha
+            if pd.notna(alpha):
+                attenuation = (1 - alpha) * 100
+                print(f"  {lv_name}: α = {alpha:.3f} (LV effects attenuated ~{attenuation:.0f}%)")
+            else:
+                print(f"  {lv_name}: α = N/A (insufficient items)")
+
+        print("\n⚠️  ATTENUATION BIAS WARNING:")
+        print("   Two-stage HCM using proxy scores underestimates LV effects.")
+        print("   True effect ≈ estimated / reliability")
+        print("   For unbiased estimates, use full ICLV (joint estimation).")
+        print("-" * 50)
 
     hcm_models = [
-        (model_hcm_basic, None),
-        (model_hcm_full, None),
+        ('hcm_basic', model_hcm_basic, None),
+        ('hcm_full', model_hcm_full, None),
     ]
+    # Filter based on selection
+    hcm_models = [(mid, func, draws) for mid, func, draws in hcm_models if mid in run_hcm]
 
     previous_hcm_result = None
-    for model_func, n_draws in hcm_models:
+    for model_id, model_func, n_draws in hcm_models:
         print(f"\nEstimating {model_func.__name__}...")
         try:
             # Use warm-start from baseline MNL or previous HCM
@@ -1557,87 +1709,101 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
     # ==========================================================================
     # ICLV MODELS (Simultaneous Estimation - Unbiased)
     # ==========================================================================
-    print("\n" + "="*80)
-    print("ICLV MODELS (Simultaneous Estimation)")
-    print("="*80)
-    print("\nICLV eliminates attenuation bias by jointly estimating")
-    print("measurement and choice models via Simulated Maximum Likelihood.")
+    # Only run ICLV if running all models or no specific models selected
+    run_iclv = (model_type == 'all' and not selected_models)
 
-    try:
-        from src.models.iclv import estimate_iclv, ICLVResult
+    if run_iclv:
+        print("\n" + "="*80)
+        print("ICLV MODELS (Simultaneous Estimation)")
+        print("="*80)
+        print("\nICLV eliminates attenuation bias by jointly estimating")
+        print("measurement and choice models via Simulated Maximum Likelihood.")
 
-        # Define constructs for ICLV (same as HCM)
-        iclv_constructs = {
-            'pat_blind': [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()],
-            'pat_const': [c for c in df.columns if c.startswith('pat_constructive_') and c[-1].isdigit()],
-            'sec_dl': [c for c in df.columns if c.startswith('sec_dl_') and c[-1].isdigit()],
-            'sec_fp': [c for c in df.columns if c.startswith('sec_fp_') and c[-1].isdigit()],
-        }
+    if run_iclv:
+        try:
+            from src.models.iclv import estimate_iclv, ICLVResult
 
-        # Define covariates for structural model
-        iclv_covariates = ['age_idx', 'edu_idx', 'income_indiv_idx']
-        iclv_covariates = [c for c in iclv_covariates if c in df.columns]
+            # Define constructs for ICLV (same as HCM) - use unified naming with fallback
+            def get_iclv_items(df, domain, start, end, fallback_prefix):
+                """Get items for ICLV construct with fallback to old naming."""
+                unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+                if unified:
+                    return unified
+                return [c for c in df.columns if c.startswith(fallback_prefix) and c[-1].isdigit()]
 
-        # Define LV effects in utility
-        lv_effects = {
-            'pat_blind': 'B_FEE_PatBlind',
-            'sec_dl': 'B_FEE_SecDL',
-        }
-
-        print(f"\nEstimating ICLV with {len(iclv_constructs)} latent constructs...")
-        print(f"  Constructs: {list(iclv_constructs.keys())}")
-        print(f"  Covariates: {iclv_covariates}")
-        print(f"  LV effects: {list(lv_effects.keys())}")
-
-        # Run ICLV estimation
-        iclv_result = estimate_iclv(
-            df=df,
-            constructs=iclv_constructs,
-            covariates=iclv_covariates,
-            choice_col='CHOICE',
-            attribute_cols=['fee1_10k', 'fee2_10k', 'fee3_10k', 'dur1', 'dur2', 'dur3'],
-            lv_effects=lv_effects,
-            n_draws=500,
-            n_categories=5,
-            verbose=True
-        )
-
-        # Convert ICLV result to standard format for comparison
-        if iclv_result is not None:
-            iclv_summary = {
-                'name': 'ICLV: Simultaneous',
-                'll': iclv_result.log_likelihood if hasattr(iclv_result, 'log_likelihood') else np.nan,
-                'k': iclv_result.n_parameters if hasattr(iclv_result, 'n_parameters') else 0,
-                'aic': iclv_result.aic if hasattr(iclv_result, 'aic') else np.nan,
-                'bic': iclv_result.bic if hasattr(iclv_result, 'bic') else np.nan,
-                'rho2': 1 - (iclv_result.log_likelihood / null_ll) if hasattr(iclv_result, 'log_likelihood') else np.nan,
-                'converged': iclv_result.converged if hasattr(iclv_result, 'converged') else True,
-                'betas': iclv_result.beta if hasattr(iclv_result, 'beta') else {},
-                't_stats': {},
+            iclv_constructs = {
+                'pat_blind': get_iclv_items(df, 'patriotism', 1, 10, 'pat_blind_'),
+                'pat_const': get_iclv_items(df, 'patriotism', 11, 20, 'pat_constructive_'),
+                'sec_dl': get_iclv_items(df, 'secularism', 1, 15, 'sec_dl_'),
+                'sec_fp': get_iclv_items(df, 'secularism', 16, 25, 'sec_fp_'),
             }
-            all_results.append(iclv_summary)
-            print(f"\n  ICLV estimation complete!")
-            if hasattr(iclv_result, 'log_likelihood'):
-                print(f"  LL: {iclv_result.log_likelihood:.2f}")
 
-    except ImportError as e:
-        print(f"\n  ICLV module not available: {e}")
-        print("  Skipping ICLV estimation. Install dependencies or check imports.")
-    except Exception as e:
-        print(f"\n  ERROR in ICLV estimation: {e}")
-        import traceback
-        traceback.print_exc()
+            # Define covariates for structural model
+            iclv_covariates = ['age_idx', 'edu_idx', 'income_indiv_idx']
+            iclv_covariates = [c for c in iclv_covariates if c in df.columns]
+
+            # Define LV effects in utility
+            lv_effects = {
+                'pat_blind': 'B_FEE_PatBlind',
+                'sec_dl': 'B_FEE_SecDL',
+            }
+
+            print(f"\nEstimating ICLV with {len(iclv_constructs)} latent constructs...")
+            print(f"  Constructs: {list(iclv_constructs.keys())}")
+            print(f"  Covariates: {iclv_covariates}")
+            print(f"  LV effects: {list(lv_effects.keys())}")
+
+            # Run ICLV estimation
+            iclv_result = estimate_iclv(
+                df=df,
+                constructs=iclv_constructs,
+                covariates=iclv_covariates,
+                choice_col='CHOICE',
+                attribute_cols=['fee1_10k', 'fee2_10k', 'fee3_10k', 'dur1', 'dur2', 'dur3'],
+                lv_effects=lv_effects,
+                n_draws=500,
+                n_categories=5,
+                verbose=True
+            )
+
+            # Convert ICLV result to standard format for comparison
+            if iclv_result is not None:
+                iclv_summary = {
+                    'name': 'ICLV: Simultaneous',
+                    'll': iclv_result.log_likelihood if hasattr(iclv_result, 'log_likelihood') else np.nan,
+                    'k': iclv_result.n_parameters if hasattr(iclv_result, 'n_parameters') else 0,
+                    'aic': iclv_result.aic if hasattr(iclv_result, 'aic') else np.nan,
+                    'bic': iclv_result.bic if hasattr(iclv_result, 'bic') else np.nan,
+                    'rho2': 1 - (iclv_result.log_likelihood / null_ll) if hasattr(iclv_result, 'log_likelihood') else np.nan,
+                    'converged': iclv_result.converged if hasattr(iclv_result, 'converged') else True,
+                    'betas': iclv_result.beta if hasattr(iclv_result, 'beta') else {},
+                    't_stats': {},
+                }
+                all_results.append(iclv_summary)
+                print(f"\n  ICLV estimation complete!")
+                if hasattr(iclv_result, 'log_likelihood'):
+                    print(f"  LL: {iclv_result.log_likelihood:.2f}")
+
+        except ImportError as e:
+            print(f"\n  ICLV module not available: {e}")
+            print("  Skipping ICLV estimation. Install dependencies or check imports.")
+        except Exception as e:
+            print(f"\n  ERROR in ICLV estimation: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ==========================================================================
     # EXTENDED MODEL SPECIFICATIONS
     # ==========================================================================
     # Run extended model comparisons with alternative functional forms,
     # distributions, and interaction patterns.
+    # Only run if running all models (no specific selection)
+    run_extended = (model_type == 'all' and not selected_models)
 
     extended_results = {}
 
     # MNL Extended Models
-    if HAS_MNL_EXTENDED:
+    if run_extended and HAS_MNL_EXTENDED:
         print("\n" + "="*80)
         print("EXTENDED MNL MODELS (8 specifications)")
         print("="*80)
@@ -1671,11 +1837,11 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
                     })
         except Exception as e:
             print(f"  ERROR in extended MNL: {e}")
-    else:
+    elif run_extended:
         print("\n  MNL Extended module not available")
 
     # MXL Extended Models
-    if HAS_MXL_EXTENDED:
+    if run_extended and HAS_MXL_EXTENDED:
         print("\n" + "="*80)
         print("EXTENDED MXL MODELS (8 specifications)")
         print("="*80)
@@ -1712,11 +1878,11 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
                     })
         except Exception as e:
             print(f"  ERROR in extended MXL: {e}")
-    else:
+    elif run_extended:
         print("\n  MXL Extended module not available")
 
     # HCM Extended Models
-    if HAS_HCM_EXTENDED:
+    if run_extended and HAS_HCM_EXTENDED:
         print("\n" + "="*80)
         print("EXTENDED HCM MODELS (8 specifications)")
         print("="*80)
@@ -1750,11 +1916,11 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
                     })
         except Exception as e:
             print(f"  ERROR in extended HCM: {e}")
-    else:
+    elif run_extended:
         print("\n  HCM Extended module not available")
 
     # Save extended model comparisons
-    if extended_results:
+    if run_extended and extended_results:
         print("\n" + "-"*80)
         print("EXTENDED MODEL COMPARISON FILES SAVED:")
         for family, data in extended_results.items():
@@ -1834,5 +2000,62 @@ def run_all_models(data_path: str = "data/simulated/full_scale_test.csv"):
 
     return all_results, summary_df
 
+def parse_arguments():
+    """Parse command-line arguments for model selection."""
+    parser = argparse.ArgumentParser(
+        description='Run DCM models with optional model selection',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/run_all_models.py --data data.csv              # Run all models
+  python scripts/run_all_models.py --data data.csv --model mnl_basic
+  python scripts/run_all_models.py --data data.csv --model mnl_basic --model mnl_full
+  python scripts/run_all_models.py --data data.csv --model-type mnl
+  python scripts/run_all_models.py --list-models
+        """
+    )
+    parser.add_argument(
+        '--data',
+        default='data/simulated/full_scale_test.csv',
+        help='Path to data CSV file (default: data/simulated/full_scale_test.csv)'
+    )
+    parser.add_argument(
+        '--model',
+        action='append',
+        dest='models',
+        metavar='MODEL_ID',
+        help='Specific model(s) to run (can be repeated). Use --list-models to see options.'
+    )
+    parser.add_argument(
+        '--model-type',
+        choices=['mnl', 'mxl', 'hcm', 'all'],
+        default='all',
+        help='Run all models of this type (default: all)'
+    )
+    parser.add_argument(
+        '--list-models',
+        action='store_true',
+        help='List available models and exit'
+    )
+    parser.add_argument(
+        '--output',
+        default='results/all_models',
+        help='Output directory (default: results/all_models)'
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    run_all_models()
+    args = parse_arguments()
+
+    if args.list_models:
+        list_available_models()
+        sys.exit(0)
+
+    run_all_models(
+        data_path=args.data,
+        output_dir=args.output,
+        selected_models=args.models,
+        model_type=args.model_type
+    )

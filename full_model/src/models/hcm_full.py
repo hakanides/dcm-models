@@ -47,6 +47,8 @@ import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
 
+from src.utils.item_detection import get_lv_items, get_items_by_prefix
+
 
 # =============================================================================
 # LATENT VARIABLE ESTIMATION
@@ -178,12 +180,13 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
     for alt in [1, 2, 3]:
         df[f'fee{alt}_10k'] = df[f'fee{alt}'] / fee_scale
 
-    # Define constructs and their item patterns
+    # Define constructs: short_name -> (full_lv_name, legacy_prefix)
+    # Short names are used in model (LV_pat_const), full names for item detection
     constructs = {
-        'pat_blind': 'pat_blind_',
-        'pat_const': 'pat_constructive_',
-        'sec_dl': 'sec_dl_',
-        'sec_fp': 'sec_fp_',
+        'pat_blind': ('pat_blind', 'pat_blind_'),
+        'pat_const': ('pat_constructive', 'pat_constructive_'),
+        'sec_dl': ('sec_dl', 'sec_dl_'),
+        'sec_fp': ('sec_fp', 'sec_fp_'),
     }
 
     # Get unique individuals
@@ -193,30 +196,34 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
     print("="*60)
 
     lv_stats = {}
-    for lv_name, item_prefix in constructs.items():
-        items = [c for c in df.columns
-                 if c.startswith(item_prefix) and c[-1].isdigit()]
+    for short_name, (full_lv_name, legacy_prefix) in constructs.items():
+        # Try new unified naming first (patriotism_1-10, etc.)
+        items = get_lv_items(df, full_lv_name)
+
+        # Fallback to legacy prefix detection
+        if not items:
+            items = get_items_by_prefix(df, legacy_prefix)
 
         if not items:
-            print(f"  WARNING: No items found for {lv_name} (pattern: {item_prefix}*)")
+            print(f"  WARNING: No items found for {short_name}")
             continue
 
-        # Estimate LV
-        lv_scores = estimate_latent_cfa(individuals, items, lv_name)
-        individuals[f'LV_{lv_name}'] = lv_scores.values
+        # Estimate LV (use short_name for column name to match model expectations)
+        lv_scores = estimate_latent_cfa(individuals, items, short_name)
+        individuals[f'LV_{short_name}'] = lv_scores.values
 
         # Compute reliability
         X = individuals[items].values
         alpha = compute_cronbach_alpha(X)
 
-        lv_stats[lv_name] = {
+        lv_stats[short_name] = {
             'n_items': len(items),
             'alpha': alpha,
             'mean': lv_scores.mean(),
             'std': lv_scores.std()
         }
 
-        print(f"\n  {lv_name.upper()}:")
+        print(f"\n  {short_name.upper()}:")
         print(f"    Items: {len(items)}")
         print(f"    Cronbach's alpha: {alpha:.3f}")
 
@@ -229,7 +236,7 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
             print(f"    Good reliability")
 
     # LV correlation matrix
-    lv_cols = [f'LV_{name}' for name in constructs.keys()
+    lv_cols = [f'LV_{name}' for name in constructs
                if f'LV_{name}' in individuals.columns]
 
     if len(lv_cols) > 1:
@@ -528,7 +535,7 @@ def estimate_hcm_full(data_path: str,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Estimate HCM Full model')
     parser.add_argument('--data', type=str, required=True, help='Path to data CSV')
-    parser.add_argument('--config', type=str, default='config/model_config_advanced.json',
+    parser.add_argument('--config', type=str, default='config/model_config.json',
                         help='Path to config JSON with true parameters')
     parser.add_argument('--output', type=str, default='results/hcm_full',
                         help='Output directory')

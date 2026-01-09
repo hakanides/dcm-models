@@ -49,10 +49,10 @@ This means:
 
 To validate MXL models:
 1. Use dcm_simulator_advanced.py with random_coefficients config section
-2. Or use model_config_advanced.json which specifies random coefficient distributions
+2. Or use model_config.json which specifies random coefficient distributions
 3. The advanced simulator generates individual-specific βs with panel consistency
 
-Example config for random coefficients (model_config_advanced.json):
+Example config for random coefficients (model_config.json):
     "random_coefficients": {
         "coefficients": {
             "b_fee_scaled": {

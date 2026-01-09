@@ -44,7 +44,7 @@ class TestDCMSimulator:
 
     def test_simulator_initialization(self, project_root):
         """Test simulator initializes with config path."""
-        config_path = project_root / 'config' / 'model_config_advanced.json'
+        config_path = project_root / 'config' / 'model_config.json'
         if not config_path.exists():
             pytest.skip("Config file not found")
 
@@ -57,7 +57,7 @@ class TestDCMSimulator:
 
     def test_simulate_demographics(self, project_root):
         """Test demographic generation."""
-        config_path = project_root / 'config' / 'model_config_advanced.json'
+        config_path = project_root / 'config' / 'model_config.json'
         if not config_path.exists():
             pytest.skip("Config file not found")
 
@@ -75,7 +75,7 @@ class TestDCMSimulator:
 
     def test_simulate_likert_responses(self, project_root):
         """Test Likert response generation."""
-        config_path = project_root / 'config' / 'model_config_advanced.json'
+        config_path = project_root / 'config' / 'model_config.json'
         if not config_path.exists():
             pytest.skip("Config file not found")
 
@@ -126,7 +126,11 @@ class TestDataGeneration:
         """Test that Likert items have variation."""
         df = sample_choice_data
 
-        likert_cols = [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()]
+        # Use unified naming: patriotism_1-10 for blind patriotism
+        likert_cols = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
+        # Fallback to old naming if new naming not present
+        if not likert_cols:
+            likert_cols = [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()]
 
         for col in likert_cols:
             # Should have at least 2 unique values
@@ -270,9 +274,14 @@ class TestLatentVariableSimulation:
 
         individuals = df.groupby('ID').first()
 
-        # Create proxy from Likert items
-        items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        # Create proxy from Likert items - use unified naming first
+        items = [f'patriotism_{i}' for i in range(1, 5)]
         available = [c for c in items if c in individuals.columns]
+
+        # Fallback to old naming if new naming not present
+        if not available:
+            items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+            available = [c for c in items if c in individuals.columns]
 
         if len(available) < 2:
             pytest.skip("Not enough Likert items")

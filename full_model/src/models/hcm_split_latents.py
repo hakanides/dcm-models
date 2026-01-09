@@ -270,12 +270,19 @@ def prepare_data(data_path: str, validate: bool = True):
     # Get unique individuals for LV estimation
     individuals = df.groupby('ID').first().reset_index()
 
-    # Define item groups
+    # Define item groups with unified naming (fallback to legacy)
+    def get_construct_items(df, domain, start, end, fallback_prefix):
+        """Get items for construct with fallback to old naming."""
+        unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+        if unified:
+            return unified
+        return [c for c in df.columns if c.startswith(fallback_prefix) and c[-1].isdigit()]
+
     constructs = {
-        'pat_blind': [c for c in df.columns if c.startswith('pat_blind_') and c[-1].isdigit()],
-        'pat_const': [c for c in df.columns if c.startswith('pat_constructive_') and c[-1].isdigit()],
-        'sec_dl': [c for c in df.columns if c.startswith('sec_dl_') and c[-1].isdigit()],
-        'sec_fp': [c for c in df.columns if c.startswith('sec_fp_') and c[-1].isdigit()],
+        'pat_blind': get_construct_items(df, 'patriotism', 1, 10, 'pat_blind_'),
+        'pat_const': get_construct_items(df, 'patriotism', 11, 20, 'pat_constructive_'),
+        'sec_dl': get_construct_items(df, 'secularism', 1, 15, 'sec_dl_'),
+        'sec_fp': get_construct_items(df, 'secularism', 16, 25, 'sec_fp_'),
     }
 
     print("\nLatent Variable Estimation (CFA):")

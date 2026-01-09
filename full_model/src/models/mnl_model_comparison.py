@@ -86,26 +86,35 @@ def load_and_prepare_data(data_path: str) -> Tuple[pd.DataFrame, db.Database]:
     df['marital_c'] = (df['marital_idx'] - 0.5) / 0.5
 
     # Create Likert scale indices (average of items per construct)
-    # Patriotism - Blind
-    pat_blind_cols = [c for c in df.columns if c.startswith('pat_blind_') and not c.endswith('_cont')]
+    # Use unified naming with fallback to old naming
+    def get_construct_items(df, domain, start, end, fallback_prefix):
+        """Get items for construct with fallback to old naming."""
+        unified = [f'{domain}_{i}' for i in range(start, end + 1)
+                   if f'{domain}_{i}' in df.columns and not f'{domain}_{i}'.endswith('_cont')]
+        if unified:
+            return unified
+        return [c for c in df.columns if c.startswith(fallback_prefix) and not c.endswith('_cont')]
+
+    # Patriotism - Blind (patriotism_1-10 or pat_blind_*)
+    pat_blind_cols = get_construct_items(df, 'patriotism', 1, 10, 'pat_blind_')
     if pat_blind_cols:
         df['pat_blind_idx'] = df[pat_blind_cols].mean(axis=1)
         df['pat_blind_idx_c'] = (df['pat_blind_idx'] - 3) / 2  # Center around midpoint
 
-    # Patriotism - Constructive
-    pat_const_cols = [c for c in df.columns if c.startswith('pat_constructive_') and not c.endswith('_cont')]
+    # Patriotism - Constructive (patriotism_11-20 or pat_constructive_*)
+    pat_const_cols = get_construct_items(df, 'patriotism', 11, 20, 'pat_constructive_')
     if pat_const_cols:
         df['pat_const_idx'] = df[pat_const_cols].mean(axis=1)
         df['pat_const_idx_c'] = (df['pat_const_idx'] - 3) / 2
 
-    # Secularism - Daily Life
-    sec_dl_cols = [c for c in df.columns if c.startswith('sec_dl_') and not c.endswith('_cont')]
+    # Secularism - Daily Life (secularism_1-15 or sec_dl_*)
+    sec_dl_cols = get_construct_items(df, 'secularism', 1, 15, 'sec_dl_')
     if sec_dl_cols:
         df['sec_dl_idx'] = df[sec_dl_cols].mean(axis=1)
         df['sec_dl_idx_c'] = (df['sec_dl_idx'] - 3) / 2
 
-    # Secularism - Faith & Prayer
-    sec_fp_cols = [c for c in df.columns if c.startswith('sec_fp_') and not c.endswith('_cont')]
+    # Secularism - Faith & Prayer (secularism_16-25 or sec_fp_*)
+    sec_fp_cols = get_construct_items(df, 'secularism', 16, 25, 'sec_fp_')
     if sec_fp_cols:
         df['sec_fp_idx'] = df[sec_fp_cols].mean(axis=1)
         df['sec_fp_idx_c'] = (df['sec_fp_idx'] - 3) / 2
@@ -158,10 +167,11 @@ def model_1_basic(database: db.Database):
     """
     v = get_common_variables()
 
-    # Parameters (starting values near true values)
-    ASC_paid = Beta('ASC_paid', 1.0, None, None, 0)   # True ~1.5
-    B_FEE = Beta('B_FEE', -0.8, None, None, 0)        # True ~-0.8, unconstrained
-    B_DUR = Beta('B_DUR', -0.08, None, None, 0)       # True ~-0.08, unconstrained
+    # Parameters with bounds for stable convergence
+    # Note: fee is scaled by 10k, so B_FEE ~ -0.03 to -0.08
+    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)      # Bounded negative, realistic start
+    B_DUR = Beta('B_DUR', -0.05, -1, 0, 0)      # Bounded negative, realistic start
 
     # Utilities
     V1 = ASC_paid + B_FEE * v['fee1_10k'] + B_DUR * v['dur1']
@@ -184,10 +194,10 @@ def model_2_demo_fee(database: db.Database):
     """
     v = get_common_variables()
 
-    # Base parameters
-    ASC_paid = Beta('ASC_paid', 0, None, None, 0)
-    B_FEE = Beta('B_FEE', -1, None, 0, 0)
-    B_DUR = Beta('B_DUR', -0.1, None, 0, 0)
+    # Base parameters with bounds for stable convergence
+    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)
+    B_DUR = Beta('B_DUR', -0.05, -1, 0, 0)
 
     # Fee interaction parameters
     B_FEE_AGE = Beta('B_FEE_AGE', 0, None, None, 0)
@@ -218,10 +228,10 @@ def model_3_demo_all(database: db.Database):
     """
     v = get_common_variables()
 
-    # Base parameters
-    ASC_paid = Beta('ASC_paid', 0, None, None, 0)
-    B_FEE = Beta('B_FEE', -1, None, 0, 0)
-    B_DUR = Beta('B_DUR', -0.1, None, 0, 0)
+    # Base parameters with bounds for stable convergence
+    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)
+    B_DUR = Beta('B_DUR', -0.05, -1, 0, 0)
 
     # Fee interactions
     B_FEE_AGE = Beta('B_FEE_AGE', 0, None, None, 0)
@@ -259,10 +269,10 @@ def model_4_likert_proxy(database: db.Database):
     """
     v = get_common_variables()
 
-    # Base parameters
-    ASC_paid = Beta('ASC_paid', 0, None, None, 0)
-    B_FEE = Beta('B_FEE', -1, None, 0, 0)
-    B_DUR = Beta('B_DUR', -0.1, None, 0, 0)
+    # Base parameters with bounds for stable convergence
+    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)
+    B_DUR = Beta('B_DUR', -0.05, -1, 0, 0)
 
     # Likert proxy interactions with fee
     B_FEE_PAT_BLIND = Beta('B_FEE_PAT_BLIND', 0, None, None, 0)
@@ -307,10 +317,10 @@ def model_5_full_mnl(database: db.Database):
     """
     v = get_common_variables()
 
-    # Base parameters
-    ASC_paid = Beta('ASC_paid', 0, None, None, 0)
-    B_FEE = Beta('B_FEE', -1, None, 0, 0)
-    B_DUR = Beta('B_DUR', -0.1, None, 0, 0)
+    # Base parameters with bounds for stable convergence
+    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
+    B_FEE = Beta('B_FEE', -0.05, -1, 0, 0)
+    B_DUR = Beta('B_DUR', -0.05, -1, 0, 0)
 
     # Fee - demographic interactions
     B_FEE_AGE = Beta('B_FEE_AGE', 0, None, None, 0)

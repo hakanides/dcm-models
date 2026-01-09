@@ -63,7 +63,7 @@ class TestProxyQuality:
             pytest.skip("True LV values not in data")
 
         # Create proxy from Likert items
-        lv_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        lv_items = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
         proxy = df[lv_items].mean(axis=1)
         proxy_std = (proxy - proxy.mean()) / proxy.std()
 
@@ -101,7 +101,7 @@ class TestProxyQuality:
         df_unique = df.drop_duplicates(subset='ID')
 
         # Proxy
-        lv_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        lv_items = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
         proxy = df_unique[lv_items].mean(axis=1)
 
         true_lv = df_unique['pat_blind_true']
@@ -168,7 +168,7 @@ class TestAttenuationBias:
         df['fee3_10k'] = df['fee3'] / 10000.0
 
         # Create LV proxy
-        lv_items = ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4']
+        lv_items = [f'patriotism_{i}' for i in range(1, 11) if f'patriotism_{i}' in df.columns]
         proxy = df[lv_items].mean(axis=1)
         df['pat_blind_proxy'] = (proxy - proxy.mean()) / proxy.std()
 
@@ -200,15 +200,14 @@ class TestAttenuationBias:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'attenuation_hcm'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
-        assert results.algorithm_has_converged(), "HCM did not converge"
+        assert results.algorithm_has_converged, "HCM did not converge"
 
-        betas = results.getBetaValues()
-        std_errs = results.getStdErr()
+        betas = results.get_beta_values()
+        std_errs = {p: results.get_parameter_std_err(p) for p in betas}
 
         estimated_b_fee_pat = betas['B_FEE_PatBlind']
         se_b_fee_pat = std_errs['B_FEE_PatBlind']
@@ -294,14 +293,13 @@ class TestAttenuationBias:
 
         biogeme_obj = bio.BIOGEME(database, logprob)
         biogeme_obj.modelName = 'oracle_hcm'
-        biogeme_obj.generate_html = False
-        biogeme_obj.generate_pickle = False
+        # HTML and pickle generation controlled via biogeme.toml
 
         results = biogeme_obj.estimate()
 
-        assert results.algorithm_has_converged(), "Oracle HCM did not converge"
+        assert results.algorithm_has_converged, "Oracle HCM did not converge"
 
-        betas = results.getBetaValues()
+        betas = results.get_beta_values()
         oracle_estimate = betas['B_FEE_PatBlind']
 
         # Compare with proxy-based estimate

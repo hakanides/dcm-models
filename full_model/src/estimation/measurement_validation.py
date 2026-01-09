@@ -723,24 +723,41 @@ def auto_detect_constructs(df: pd.DataFrame,
     Args:
         df: DataFrame with indicator columns
         patterns: Dict mapping construct name to column prefix pattern
-                 Default: standard HCM patterns
+                 Default: standard HCM patterns (supports unified and legacy naming)
 
     Returns:
         Dict mapping construct names to item column lists
     """
-    if patterns is None:
-        patterns = {
-            'pat_blind': 'pat_blind_',
-            'pat_const': 'pat_constructive_',
-            'sec_dl': 'sec_dl_',
-            'sec_fp': 'sec_fp_'
-        }
+    # Define unified naming ranges and fallback prefixes
+    construct_specs = {
+        'pat_blind': {'domain': 'patriotism', 'start': 1, 'end': 10, 'fallback': 'pat_blind_'},
+        'pat_const': {'domain': 'patriotism', 'start': 11, 'end': 20, 'fallback': 'pat_constructive_'},
+        'sec_dl': {'domain': 'secularism', 'start': 1, 'end': 15, 'fallback': 'sec_dl_'},
+        'sec_fp': {'domain': 'secularism', 'start': 16, 'end': 25, 'fallback': 'sec_fp_'},
+    }
 
     constructs = {}
-    for name, prefix in patterns.items():
-        items = [c for c in df.columns if c.startswith(prefix) and c[-1].isdigit()]
-        if items:
-            constructs[name] = sorted(items)
+
+    for name, spec in construct_specs.items():
+        # Try unified naming first (patriotism_1, secularism_1, etc.)
+        unified_items = [f"{spec['domain']}_{i}" for i in range(spec['start'], spec['end'] + 1)
+                        if f"{spec['domain']}_{i}" in df.columns]
+
+        if unified_items:
+            constructs[name] = sorted(unified_items)
+        else:
+            # Fallback to legacy naming (pat_blind_1, sec_dl_1, etc.)
+            legacy_items = [c for c in df.columns if c.startswith(spec['fallback']) and c[-1].isdigit()]
+            if legacy_items:
+                constructs[name] = sorted(legacy_items)
+
+    # Also support custom patterns if provided
+    if patterns is not None:
+        for name, prefix in patterns.items():
+            if name not in constructs:
+                items = [c for c in df.columns if c.startswith(prefix) and c[-1].isdigit()]
+                if items:
+                    constructs[name] = sorted(items)
 
     return constructs
 

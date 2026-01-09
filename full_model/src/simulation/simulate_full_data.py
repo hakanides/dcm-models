@@ -1,7 +1,55 @@
 import argparse
 import json
+import os
+import glob
+import shutil
+from pathlib import Path
 import numpy as np
 import pandas as pd
+
+
+def cleanup_old_outputs(output_dir: str, archive: bool = True):
+    """Remove old generated CSV files before creating new ones.
+
+    Args:
+        output_dir: Directory containing generated files
+        archive: If True, move old files to archive folder instead of deleting
+    """
+    output_path = Path(output_dir)
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
+        return
+
+    # Find all CSV files in output directory
+    csv_files = list(output_path.glob("*.csv"))
+
+    if not csv_files:
+        return
+
+    print(f"Found {len(csv_files)} existing CSV file(s) in {output_dir}")
+
+    if archive:
+        # Create archive folder with timestamp
+        archive_dir = output_path / "archive"
+        archive_dir.mkdir(exist_ok=True)
+
+        for f in csv_files:
+            dest = archive_dir / f.name
+            # If file already exists in archive, add suffix
+            if dest.exists():
+                base = f.stem
+                suffix = 1
+                while (archive_dir / f"{base}_{suffix}.csv").exists():
+                    suffix += 1
+                dest = archive_dir / f"{base}_{suffix}.csv"
+            shutil.move(str(f), str(dest))
+            print(f"  Archived: {f.name} -> archive/{dest.name}")
+    else:
+        for f in csv_files:
+            f.unlink()
+            print(f"  Deleted: {f.name}")
+
+    print()
 
 
 def softmax(u):
@@ -54,15 +102,31 @@ def build_latents(rng, latent_cfg, demo):
     return lat
 
 def factor_to_lv_name(factor_str):
+    """Map factor/subconstruct name from items_config.csv to internal LV name.
+
+    Supports both short names (blind, constructive, dl, fp) and
+    full LV names (pat_blind, pat_constructive, sec_dl, sec_fp).
+    """
     fac = str(factor_str).strip().lower()
-    if fac == "blind":
-        return "pat_blind"
-    if fac == "constructive":
-        return "pat_constructive"
-    if fac in ("daily", "dl", "dailylife"):
-        return "sec_dl"
-    if fac in ("faith", "fp", "faithandprayer", "faith_prayer"):
-        return "sec_fp"
+    mapping = {
+        # Short names
+        'blind': 'pat_blind',
+        'constructive': 'pat_constructive',
+        'daily': 'sec_dl',
+        'dl': 'sec_dl',
+        'dailylife': 'sec_dl',
+        'faith': 'sec_fp',
+        'fp': 'sec_fp',
+        'faithandprayer': 'sec_fp',
+        'faith_prayer': 'sec_fp',
+        # Full LV names (passthrough)
+        'pat_blind': 'pat_blind',
+        'pat_constructive': 'pat_constructive',
+        'sec_dl': 'sec_dl',
+        'sec_fp': 'sec_fp',
+    }
+    if fac in mapping:
+        return mapping[fac]
     raise ValueError(f"Unknown factor '{factor_str}' in items_config.csv")
 
 
@@ -157,11 +221,30 @@ def compute_utility(cfg_choice, row, alt_name, demo, lat):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="configs/model_config.json")
-    ap.add_argument("--out", default="synthetic_hcm_panel.csv")
-    ap.add_argument("--keep_latent", action="store_true")
+    ap = argparse.ArgumentParser(description="Generate simulated DCM data with known true parameters")
+    ap.add_argument("--config", default="config/model_config.json",
+                    help="Path to model config JSON (default: config/model_config.json)")
+    ap.add_argument("--output", default="data/simulated",
+                    help="Output directory for generated data (default: data/simulated)")
+    ap.add_argument("--out", default="full_scale_test.csv",
+                    help="Output filename (default: full_scale_test.csv)")
+    ap.add_argument("--keep_latent", action="store_true",
+                    help="Include true latent variable values in output")
+    ap.add_argument("--no-archive", dest="archive", action="store_false",
+                    help="Delete old files instead of archiving them")
+    ap.add_argument("--no-cleanup", dest="cleanup", action="store_false",
+                    help="Skip cleanup of old files")
+    ap.set_defaults(archive=True, cleanup=True)
     args = ap.parse_args()
+
+    # Cleanup old generated files
+    output_dir = Path(args.output)
+    if args.cleanup:
+        cleanup_old_outputs(str(output_dir), archive=args.archive)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine output file path
+    output_file = output_dir / args.out
 
     cfg = json.load(open(args.config, "r", encoding="utf-8"))
     N = int(cfg["population"]["N"])
@@ -250,13 +333,14 @@ def main():
             out_rows.append(rec)
 
     synth = pd.DataFrame(out_rows)
-    synth.to_csv(args.out, index=False)
+    synth.to_csv(output_file, index=False)
 
     print("=== DONE ===")
-    print("Wrote:", args.out)
-    print("Rows:", len(synth), "Respondents:", synth["ID"].nunique())
-    print("Choice shares:", synth["CHOICE"].value_counts(normalize=True).sort_index().to_dict())
-    print("Items:", len(items), "Reverse items:", int(items["reverse"].sum()))
+    print(f"Config used: {args.config}")
+    print(f"Output file: {output_file}")
+    print(f"Rows: {len(synth)}, Respondents: {synth['ID'].nunique()}")
+    print(f"Choice shares: {synth['CHOICE'].value_counts(normalize=True).sort_index().to_dict()}")
+    print(f"Items: {len(items)}, Reverse items: {int(items['reverse'].sum())}")
 
 if __name__ == "__main__":
     main()

@@ -89,11 +89,20 @@ def prepare_data(data_path: str) -> tuple:
     df['marital_c'] = (df['marital_idx'] - 0.5) / 0.5
 
     # Create latent variable proxies from Likert items (factor means)
+    # Use unified naming: patriotism_1-10 (blind), patriotism_11-20 (constructive)
+    #                     secularism_1-15 (daily), secularism_16-25 (faith)
+    def get_lv_items(df, domain, start, end, fallback_prefix):
+        """Get items for latent variable with fallback to old naming."""
+        unified = [f'{domain}_{i}' for i in range(start, end + 1) if f'{domain}_{i}' in df.columns]
+        if unified:
+            return unified
+        return [c for c in df.columns if c.startswith(fallback_prefix) and c[-1].isdigit()][:4]
+
     lv_items = {
-        'pat_blind': ['pat_blind_1', 'pat_blind_2', 'pat_blind_3', 'pat_blind_4'],
-        'pat_constructive': ['pat_constructive_1', 'pat_constructive_2', 'pat_constructive_3', 'pat_constructive_4'],
-        'sec_dl': ['sec_dl_1', 'sec_dl_2', 'sec_dl_3', 'sec_dl_4'],
-        'sec_fp': ['sec_fp_1', 'sec_fp_2', 'sec_fp_3', 'sec_fp_4'],
+        'pat_blind': get_lv_items(df, 'patriotism', 1, 10, 'pat_blind_'),
+        'pat_constructive': get_lv_items(df, 'patriotism', 11, 20, 'pat_constructive_'),
+        'sec_dl': get_lv_items(df, 'secularism', 1, 15, 'sec_dl_'),
+        'sec_fp': get_lv_items(df, 'secularism', 16, 25, 'sec_fp_'),
     }
 
     for lv_name, items in lv_items.items():

@@ -26,7 +26,7 @@ If you need fresh simulated data with known true parameters:
 
 ```bash
 python src/simulation/simulate_full_data.py \
-    --config config/model_config_advanced.json \
+    --config config/model_config.json \
     --output data/simulated/ \
     --n_individuals 1000 \
     --n_tasks 10
@@ -116,13 +116,48 @@ B_FEE_PatBlind    -0.10    -0.095    0.010   -9.50    -5.0%   Yes
 
 ---
 
+## Isolated Model Validation
+
+For validating parameter recovery with matching DGP (data generating process), use the standalone model folders:
+
+```bash
+# Run MNL Basic (simplest, unbiased baseline)
+cd models/mnl_basic && python run.py
+
+# Run MNL with Demographics
+cd models/mnl_demographics && python run.py
+
+# Run MXL with random coefficients
+cd models/mxl_basic && python run.py
+
+# Run HCM Basic (shows attenuation bias from two-stage estimation)
+cd models/hcm_basic && python run.py
+
+# Run HCM Full (all 4 latent variables)
+cd models/hcm_full && python run.py
+
+# Run ICLV (shows bias elimination through simultaneous estimation)
+cd models/iclv && python run.py
+```
+
+**Key insight:** ICLV shows 2.4% bias on LV effects vs 50-66% in HCM two-stage estimation.
+
+Each folder contains:
+- `config.json` - Model-specific DGP configuration
+- `simulate_full_data.py` - Generates data matching model specification
+- `model.py` - Biogeme estimation code
+- `run.py` - Orchestrates simulation + estimation
+- `results/` - Parameter estimates and comparison to true values
+
+---
+
 ## Running Individual Components
 
 ### Generate New Simulated Data
 
 ```bash
 python src/simulation/simulate_full_data.py \
-    --config config/model_config_advanced.json \
+    --config config/model_config.json \
     --output data/simulated/my_data.csv \
     --n_individuals 1000 \
     --n_tasks 10
@@ -215,9 +250,9 @@ print(f'Log-likelihood: {result.log_likelihood:.2f}')
 
 | File | Purpose |
 |------|---------|
-| `config/model_config_advanced.json` | TRUE parameters for simulation & validation |
+| `config/model_config.json` | TRUE parameters for simulation & validation |
 | `config/model_config.json` | Simple config for quick testing |
-| `config/items_config_advanced.csv` | Likert scale item definitions |
+| `config/items_config.csv` | Likert scale item definitions |
 | `biogeme.toml` | Optimizer settings |
 
 ---
@@ -313,5 +348,5 @@ If ICLV estimation has convergence problems:
 1. Read `README.md` for complete documentation
 2. Read `docs/METHODOLOGY.md` for statistical details
 3. Read `docs/MODEL_SPECIFICATIONS.md` for model equations
-4. Modify `config/model_config_advanced.json` for your parameters
+4. Modify `config/model_config.json` for your parameters
 5. Add your own data following the format in `data/simulated/`

@@ -51,4 +51,16 @@ htmlcov/
 
 # Large data files (track only small test data)
 data/simulated/*.csv
+data/simulated/archive/
 data/processed/*.csv
+
+# External data (not part of core project)
+giray_data/
+
+# Biogeme generated config files
+biogeme.toml
+*.pickle
+
+# Isolated model outputs (regeneratable)
+models/*/data/
+models/*/results/

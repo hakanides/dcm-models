@@ -39,6 +39,8 @@ import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
 
+from src.utils.item_detection import get_lv_items, get_items_by_prefix
+
 
 # =============================================================================
 # LATENT VARIABLE ESTIMATION
@@ -88,12 +90,12 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> Tuple[pd.DataFram
     df['edu_c'] = (df['edu_idx'] - df['edu_idx'].mean()) / df['edu_idx'].std()
     df['inc_c'] = (df['income_indiv_idx'] - df['income_indiv_idx'].mean()) / df['income_indiv_idx'].std()
 
-    # Define constructs
+    # Define constructs: short_name -> (full_lv_name, legacy_prefix)
     constructs = {
-        'pat_blind': 'pat_blind_',
-        'pat_const': 'pat_constructive_',
-        'sec_dl': 'sec_dl_',
-        'sec_fp': 'sec_fp_',
+        'pat_blind': ('pat_blind', 'pat_blind_'),
+        'pat_const': ('pat_constructive', 'pat_constructive_'),
+        'sec_dl': ('sec_dl', 'sec_dl_'),
+        'sec_fp': ('sec_fp', 'sec_fp_'),
     }
 
     # Get unique individuals
@@ -103,23 +105,28 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> Tuple[pd.DataFram
     print("-"*50)
 
     lv_stats = {}
-    for lv_name, item_prefix in constructs.items():
-        items = [c for c in df.columns if c.startswith(item_prefix) and c[-1].isdigit()]
+    for short_name, (full_lv_name, legacy_prefix) in constructs.items():
+        # Try new unified naming first (patriotism_1-10, etc.)
+        items = get_lv_items(df, full_lv_name)
+
+        # Fallback to legacy prefix detection
+        if not items:
+            items = get_items_by_prefix(df, legacy_prefix)
 
         if not items:
             continue
 
-        lv_scores = estimate_latent_cfa(individuals, items, lv_name)
-        individuals[f'LV_{lv_name}'] = lv_scores.values
+        lv_scores = estimate_latent_cfa(individuals, items, short_name)
+        individuals[f'LV_{short_name}'] = lv_scores.values
 
         # Squared LV for quadratic effects
-        individuals[f'LV_{lv_name}_sq'] = lv_scores.values ** 2
+        individuals[f'LV_{short_name}_sq'] = lv_scores.values ** 2
 
         X = individuals[items].values
         alpha = compute_cronbach_alpha(X)
 
-        lv_stats[lv_name] = {'n_items': len(items), 'alpha': alpha}
-        print(f"  {lv_name}: {len(items)} items, alpha={alpha:.3f}")
+        lv_stats[short_name] = {'n_items': len(items), 'alpha': alpha}
+        print(f"  {short_name}: {len(items)} items, alpha={alpha:.3f}")
 
     # Merge LVs back
     lv_cols = [c for c in individuals.columns if c.startswith('LV_')]
