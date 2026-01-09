@@ -1,6 +1,21 @@
 # Quick Start Guide
 
+**Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk**
+
 Get up and running with DCM estimation in 5 minutes.
+
+---
+
+## Which Folder Should I Use?
+
+| I want to... | Use | Time |
+|--------------|-----|------|
+| Learn DCM step-by-step | `models/` | 30 sec - 10 min per model |
+| Quick parameter recovery test | `models/` | 30 sec - 10 min |
+| Full research pipeline | `full_model/` | 30-60 min total |
+| Publication-ready outputs | `full_model/` | 30-60 min total |
+
+**Recommendation:** Start with `models/` to understand the methodology, then graduate to `full_model/` for comprehensive research.
 
 ---
 
@@ -12,34 +27,57 @@ pip install biogeme pandas numpy scipy scikit-learn matplotlib
 
 ---
 
-## Step 1: Navigate to Project
+## Option A: Start with Isolated Models (Recommended)
+
+### Step 1: Run Your First Model
 
 ```bash
-cd "/path/to/DCM-Research"
+cd models/mnl_basic
+python run.py  # ~30 seconds
 ```
+
+This will:
+1. Simulate data with known true parameters
+2. Estimate the model
+3. Compare estimates to true values
+4. Generate LaTeX tables
+
+### Step 2: Check Results
+
+```bash
+cat results/parameter_comparison.csv
+ls output/latex/
+```
+
+### Step 3: Progress Through Model Hierarchy
+
+| Step | Command | Time | What You Learn |
+|------|---------|------|----------------|
+| 1 | `cd models/mnl_basic && python run.py` | ~30 sec | Baseline MNL |
+| 2 | `cd models/mnl_demographics && python run.py` | ~1 min | Observable heterogeneity |
+| 3 | `cd models/mxl_basic && python run.py` | ~2 min | Random coefficients |
+| 4 | `cd models/hcm_basic && python run.py` | ~3 min | Latent variables (two-stage) |
+| 5 | `cd models/hcm_full && python run.py` | ~5 min | Attenuation bias problem |
+| 6 | `cd models/iclv && python run.py` | ~10 min | Simultaneous estimation (solution) |
+
+**Key Insight:** Compare HCM vs ICLV results. ICLV reduces latent variable bias from 50-66% (HCM two-stage) to ~2.4%.
 
 ---
 
-## Step 2: Generate Simulated Data (Optional)
+## Option B: Full Research Pipeline
 
-If you need fresh simulated data with known true parameters:
+When you're ready for comprehensive research with 32+ model specifications:
+
+### Step 1: Navigate to Full Model
 
 ```bash
-python src/simulation/simulate_full_data.py \
-    --config config/model_config.json \
-    --output data/simulated/ \
-    --n_individuals 1000 \
-    --n_tasks 10
+cd full_model
 ```
 
----
-
-## Step 3: Run the Complete Pipeline
-
-This runs MNL, MXL, HCM, ICLV, and all extended models with automatic comparison:
+### Step 2: Run Complete Pipeline
 
 ```bash
-python scripts/run_all_models.py
+python scripts/run_all_models.py  # ~30-60 minutes
 ```
 
 **What happens:**
@@ -60,9 +98,7 @@ python scripts/run_all_models.py
 - `results/all_models/parameter_comparison.csv` - All parameter estimates
 - `output/latex/MNL/`, `output/latex/MXL/`, `output/latex/HCM/`, `output/latex/ICLV/` - LaTeX tables
 
----
-
-## Step 4: View Results
+### Step 3: View Results
 
 ```bash
 # View model comparison
@@ -116,38 +152,93 @@ B_FEE_PatBlind    -0.10    -0.095    0.010   -9.50    -5.0%   Yes
 
 ---
 
-## Isolated Model Validation
+## Isolated Model Validation (models/ folder)
 
-For validating parameter recovery with matching DGP (data generating process), use the standalone model folders:
+Each model in `models/` has its own Data Generating Process (DGP) that exactly matches the model specification. This ensures unbiased parameter recovery.
 
-```bash
-# Run MNL Basic (simplest, unbiased baseline)
-cd models/mnl_basic && python run.py
+### How It Works
 
-# Run MNL with Demographics
-cd models/mnl_demographics && python run.py
-
-# Run MXL with random coefficients
-cd models/mxl_basic && python run.py
-
-# Run HCM Basic (shows attenuation bias from two-stage estimation)
-cd models/hcm_basic && python run.py
-
-# Run HCM Full (all 4 latent variables)
-cd models/hcm_full && python run.py
-
-# Run ICLV (shows bias elimination through simultaneous estimation)
-cd models/iclv && python run.py
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 1: CONFIGURE                                                   │
+│  config.json → Define TRUE parameter values                         │
+│  • Population size (N individuals, T choice tasks)                   │
+│  • True coefficients (ASC, B_FEE, B_DUR, etc.)                      │
+│  • Demographics distribution                                         │
+│  • Latent variables (for HCM/ICLV)                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 2: SIMULATE                                                    │
+│  simulate_full_data.py → Generate synthetic data                    │
+│  • Draw demographics from config distributions                       │
+│  • Compute utilities using TRUE parameters                          │
+│  • Simulate choices using Random Utility Model                      │
+│  • Output: data/simulated_data.csv                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 3: ESTIMATE                                                    │
+│  model.py → Recover parameters using Biogeme                        │
+│  • Load simulated data                                              │
+│  • Estimate model (MLE optimization)                                │
+│  • Compare estimates to TRUE values                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 4: OUTPUT                                                      │
+│  Saved to multiple locations:                                       │
+│  • results/parameter_comparison.csv   (estimates vs true)           │
+│  • results/estimation_results.csv     (full Biogeme output)         │
+│  • output/latex/                      (publication tables)          │
+│  • policy_analysis/                   (WTP, elasticities)           │
+│  • sample_stats/                      (descriptive statistics)      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key insight:** ICLV shows 2.4% bias on LV effects vs 50-66% in HCM two-stage estimation.
+### Config.json Structure
 
-Each folder contains:
-- `config.json` - Model-specific DGP configuration
+Each model's `config.json` defines the true parameters:
+
+```json
+{
+  "model_info": {
+    "name": "MNL Basic",
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_DUR": -0.08
+    }
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  }
+}
+```
+
+**To experiment:** Modify `true_values` in config.json, run `python run.py`, and check if estimates recover your values.
+
+### Output Files
+
+| Location | File | Contents |
+|----------|------|----------|
+| `results/` | `parameter_comparison.csv` | True vs Estimated, bias %, CI coverage |
+| `results/` | `estimation_results.csv` | Full Biogeme output |
+| `output/latex/` | `*.tex` | Publication-ready tables |
+| `policy_analysis/` | `wtp.csv` | Willingness-to-pay |
+
+### Each Folder Contains
+
+- `config.json` - Model-specific true parameters
 - `simulate_full_data.py` - Generates data matching model specification
 - `model.py` - Biogeme estimation code
 - `run.py` - Orchestrates simulation + estimation
-- `results/` - Parameter estimates and comparison to true values
+- `results/` - Parameter estimates vs true values
+- `output/latex/` - Publication-ready tables
+
+**Key insight:** Compare HCM (~50-66% attenuation) vs ICLV (~2.4% bias) to see why simultaneous estimation matters.
 
 ---
 
@@ -327,7 +418,7 @@ Model is worse than random choice. Check:
 
 ```bash
 # Ensure running from project root
-cd /path/to/DCM-Research
+cd /path/to/project
 
 # Add src to Python path
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"

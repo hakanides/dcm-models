@@ -1,5 +1,7 @@
 # Model Specifications Guide
 
+**Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk**
+
 This document provides detailed specifications for all models implemented in this DCM research project.
 
 ---

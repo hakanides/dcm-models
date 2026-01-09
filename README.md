@@ -1,60 +1,75 @@
 # Discrete Choice Modeling (DCM) Research Framework
 
-A publication-ready Python framework for discrete choice model estimation with integrated data simulation for validation. Implements the full hierarchy from MNL to ICLV with 32+ model specifications.
+**Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk**
+
+A Python framework for discrete choice model estimation with integrated data simulation for validation. Implements the full hierarchy from MNL to ICLV with 32+ model specifications.
+
+---
+
+## Two-Tier Architecture
+
+This project provides **two complementary approaches** for different needs:
+
+### `models/` - Start Here (Isolated Validation)
+
+Rigorous statistical validation with matching Data Generating Processes (DGP). Each model folder is self-contained and runs independently.
+
+**Use this when:**
+- Learning DCM methodology step-by-step
+- Quick parameter recovery tests (~30 sec to ~10 min per model)
+- Understanding the MNL → MXL → HCM → ICLV progression
+- Limited computational resources
+- Teaching or demonstration
+
+```bash
+# Example: Run basic MNL validation
+cd models/mnl_basic
+python run.py  # ~30 seconds
+```
+
+### `full_model/` - Full Research Pipeline
+
+Publication-ready framework with 32+ model specifications for comprehensive research.
+
+**Use this when:**
+- You have sufficient computational resources (16GB+ RAM recommended)
+
+
+```bash
+# Run complete pipeline
+cd full_model
+python scripts/run_all_models.py  # ~30-60 minutes
+```
+
+---
+
+## Recommended Learning Path
+
+| Step | Model | Folder | Time | What You Learn |
+|------|-------|--------|------|----------------|
+| 1 | MNL Basic | `models/mnl_basic/` | ~30 sec | Baseline discrete choice |
+| 2 | MNL Demographics | `models/mnl_demographics/` | ~1 min | Observable heterogeneity |
+| 3 | MXL Basic | `models/mxl_basic/` | ~2 min | Unobserved heterogeneity |
+| 4 | HCM Basic | `models/hcm_basic/` | ~3 min | Latent variables (two-stage) |
+| 5 | HCM Full | `models/hcm_full/` | ~5 min | Attenuation bias problem |
+| 6 | ICLV | `models/iclv/` | ~10 min | Simultaneous estimation (solution) |
+
+**Key Insight:** ICLV simultaneous estimation reduces latent variable bias from 50-66% (HCM two-stage) to 2.4%.
+
+---
 
 ## Table of Contents
 
-- [Overview](#overview)
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
+- [Isolated Model Validation](#isolated-model-validation)
+- [Full Pipeline](#full-pipeline)
 - [Model Hierarchy](#model-hierarchy)
 - [Usage Examples](#usage-examples)
 - [Configuration](#configuration)
 - [For Real Data](#for-real-data)
 - [API Reference](#api-reference)
 - [Methodology Notes](#methodology-notes)
-
----
-
-## Overview
-
-This framework implements a complete DCM research pipeline designed for academic publication:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        SIMULATION MODULE                             │
-│  config/model_config.json → src/simulation/                │
-│  • Demographics (age, education, income)                            │
-│  • Latent variables (patriotism, secularism constructs)            │
-│  • Likert scale responses (5-point ordered probit)                 │
-│  • Choice behavior (soft utility maximization)                      │
-└─────────────────────────────────────────────────────────────────────┘
-                                ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                        ESTIMATION MODULE                             │
-│  scripts/run_all_models.py → MNL → MXL → HCM → ICLV                │
-│  • MNL: Baseline + demographics + extended (8 specs)               │
-│  • MXL: Random parameters + extended (8 specs)                     │
-│  • HCM: Two-stage latent variables + extended (8 specs)            │
-│  • ICLV: Simultaneous estimation (unbiased)                        │
-└─────────────────────────────────────────────────────────────────────┘
-                                ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                     VALIDATION & OUTPUT                              │
-│  • Compare estimates to TRUE parameters (simulation validation)     │
-│  • Model comparison: AIC, BIC, likelihood ratio tests              │
-│  • LaTeX tables for publication                                     │
-│  • Parameter recovery metrics (bias, RMSE, coverage)               │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Key Features
-
-- **32+ Model Specifications**: MNL, MXL, HCM, ICLV with multiple functional forms
-- **Simulation-Based Validation**: Known true parameters for rigorous testing
-- **Publication-Ready Output**: LaTeX tables, comparison metrics
-- **Biogeme Integration**: Industry-standard estimation engine
-- **Enhanced ICLV**: Auto-scaling, two-stage initialization, robust SE, panel support
 
 ---
 
@@ -75,58 +90,44 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Generate Simulated Data
+### 2. Run Your First Model (Isolated Validation)
 
 ```bash
-python src/simulation/simulate_full_data.py \
-    --config config/model_config.json \
-    --output data/simulated/ \
-    --n_individuals 1000 \
-    --n_tasks 10
-```
+# Start with basic MNL - simplest model
+cd models/mnl_basic
+python run.py
 
-### 3. Run All Models
-
-```bash
-python scripts/run_all_models.py
-```
-
-### 4. View Results
-
-```bash
-ls results/all_models/
+# Check results
+ls results/
 ls output/latex/
 ```
 
----
-
-## Isolated Model Validation
-
-For rigorous statistical validation, each core model has its own folder with a matching data generating process (DGP). This ensures unbiased parameter recovery when the model specification matches the true DGP.
-
-| Model | Folder | Validation Result |
-|-------|--------|------------------|
-| MNL Basic | `models/mnl_basic/` | Unbiased (<2% bias) |
-| MNL Demographics | `models/mnl_demographics/` | Unbiased (all within 95% CI) |
-| MXL Basic | `models/mxl_basic/` | Good recovery (<6% bias) |
-| HCM Basic | `models/hcm_basic/` | Expected attenuation (~50-66% on LV effect) |
-| HCM Full | `models/hcm_full/` | Expected attenuation on all LV effects |
-| ICLV | `models/iclv/` | Unbiased LV effects (2.4% vs 50% in HCM) |
-
-### Run Isolated Model
+### 3. Progress Through Model Hierarchy
 
 ```bash
-cd models/mnl_basic
+# After understanding MNL, try MXL
+cd ../mxl_basic
+python run.py
+
+# Then HCM to see attenuation bias
+cd ../hcm_basic
+python run.py
+
+# Finally ICLV to see the solution
+cd ../iclv
 python run.py
 ```
 
-Each folder contains:
-- `config.json` - Model-specific DGP (only interactions the model can estimate)
-- `simulate_full_data.py` - Standalone data generator
-- `model.py` - Biogeme estimation
-- `run.py` - Orchestrates simulation + estimation
+### 4. Full Pipeline (When Ready)
 
-**Key Finding:** ICLV simultaneous estimation eliminates the attenuation bias present in two-stage HCM estimation (2.4% bias vs 50-66%).
+```bash
+cd full_model
+python scripts/run_all_models.py
+
+# Results
+ls results/all_models/
+ls output/latex/
+```
 
 ---
 
@@ -134,91 +135,216 @@ Each folder contains:
 
 ```
 DCM-Research/
-├── config/                              # Configuration files
-│   ├── model_config.json       # Main config with true parameters
-│   ├── model_config.json                # Simple config for testing
-│   ├── items_config.csv                 # Likert scale item definitions
-│   └── items_config.csv        # Advanced item definitions
 │
-├── src/
-│   ├── models/                          # Model specifications
-│   │   ├── mnl_basic.py                 # Basic MNL
-│   │   ├── mnl_demographics.py          # MNL with demographics
-│   │   ├── mnl_extended.py              # 8 MNL specifications
-│   │   ├── mxl_basic.py                 # Basic Mixed Logit
-│   │   ├── mxl_extended.py              # 8 MXL specifications
-│   │   ├── hcm_basic.py                 # Basic HCM (single LV)
-│   │   ├── hcm_full.py                  # Full HCM (all LVs)
-│   │   ├── hcm_extended.py              # 8 HCM specifications
-│   │   ├── hcm_split_latents.py         # Two-stage HCM
-│   │   ├── iclv/                        # ICLV module (enhanced)
-│   │   ├── model_factory.py             # Model registry
-│   │   └── validation_models.py         # True LV benchmark
-│   │
-│   ├── simulation/                      # Data generation
-│   │   ├── dcm_simulator.py             # Core simulator
-│   │   ├── dcm_simulator_advanced.py    # With random coefficients
-│   │   └── simulate_full_data.py        # CLI wrapper
-│   │
-│   ├── estimation/                      # Estimation utilities
-│   │   ├── robust_estimation.py         # Convergence management
-│   │   ├── convergence_diagnostics.py   # Convergence checking
-│   │   ├── model_comparison.py          # LR tests, AIC/BIC
-│   │   ├── measurement_validation.py    # Cronbach's α, AVE, CR
-│   │   ├── bootstrap_inference.py       # Bootstrap CIs
-│   │   └── cross_validation.py          # K-fold CV
-│   │
-│   ├── policy_analysis/                 # Policy applications
-│   │   ├── wtp_analysis.py              # Willingness-to-pay
-│   │   ├── elasticity.py                # Price/duration elasticities
-│   │   └── demand_forecasting.py        # Market share prediction
-│   │
-│   ├── analysis/                        # Analysis tools
-│   │   ├── final_comparison.py          # Cross-model comparison
-│   │   └── sensitivity_analysis.py      # Sensitivity analysis
-│   │
-│   ├── validation/                      # Validation tools
-│   │   └── monte_carlo.py               # Monte Carlo studies
-│   │
-│   └── utils/                           # Utilities
-│       ├── latex_output.py              # LaTeX table generation
-│       └── visualization.py             # Publication figures
+├── models/                              # TIER 1: ISOLATED MODEL VALIDATION
+│   │                                    # Start here for learning & quick tests
+│   ├── mnl_basic/                       # Basic MNL (~30 sec, <2% bias)
+│   ├── mnl_demographics/                # MNL + demographics (~1 min)
+│   ├── mxl_basic/                       # MXL random coefficients (~2 min)
+│   ├── hcm_basic/                       # HCM single LV (~3 min, shows attenuation)
+│   ├── hcm_full/                        # HCM 4 LVs (~5 min, shows attenuation)
+│   ├── iclv/                            # ICLV simultaneous (~10 min, unbiased)
+│   └── shared/                          # Shared utilities
+│       ├── policy_tools.py              # WTP, elasticity, consumer surplus
+│       ├── latex_tools.py               # LaTeX table generation
+│       ├── sample_stats.py              # Descriptive statistics
+│       └── cleanup.py                   # Output management
 │
-├── scripts/
-│   ├── run_all_models.py                # Main pipeline script
-│   └── validate_estimation.py           # Validation script
+├── full_model/                          # TIER 2: FULL RESEARCH PIPELINE
+│   │                                    # Use for comprehensive research
+│   ├── src/
+│   │   ├── models/                      # 32+ model specifications
+│   │   ├── simulation/                  # Data generation
+│   │   ├── estimation/                  # Validation utilities
+│   │   ├── policy_analysis/             # WTP, elasticity, welfare
+│   │   └── utils/                       # LaTeX, visualization
+│   ├── scripts/
+│   │   └── run_all_models.py            # Main pipeline (~30-60 min)
+│   ├── config/
+│   │   ├── model_config.json            # True parameters
+│   │   └── items_config.csv             # Likert items
+│   ├── data/
+│   │   ├── raw/scenarios_prepared.csv   # Choice design
+│   │   └── simulated/                   # Generated data
+│   ├── tests/                           # Comprehensive test suite
+│   ├── results/                         # Estimation outputs
+│   └── output/latex/                    # Publication tables
 │
-├── data/
-│   ├── raw/                             # Raw scenario definitions
-│   │   └── scenarios_prepared.csv
-│   └── simulated/                       # Generated simulation data
+├── docs/
+│   ├── QUICK_START.md                   # 5-minute getting started
+│   ├── METHODOLOGY.md                   # Statistical methodology
+│   └── MODEL_SPECIFICATIONS.md          # Complete model equations
 │
-├── output/
-│   ├── latex/                           # LaTeX tables by model family
-│   │   ├── MNL/
-│   │   ├── MXL/
-│   │   ├── HCM/
-│   │   └── simulation/
-│   └── logs/                            # Log files
-│
-├── results/
-│   └── all_models/                      # Model estimation results
-│
-├── models/                              # Isolated model validation
-│   ├── mnl_basic/                       # Basic MNL (unbiased)
-│   ├── mnl_demographics/                # MNL + demographics (unbiased)
-│   ├── mxl_basic/                       # MXL random coefficients
-│   ├── hcm_basic/                       # HCM single LV (attenuation)
-│   ├── hcm_full/                        # HCM all 4 LVs (attenuation)
-│   └── iclv/                            # ICLV simultaneous (unbiased)
-│
-├── tests/                               # Test suite
-│
-└── docs/                                # Documentation
-    ├── METHODOLOGY.md
-    ├── MODEL_SPECIFICATIONS.md
-    └── QUICK_START.md
+├── README.md
+├── requirements.txt
+└── .gitignore
 ```
+
+---
+
+## Isolated Model Validation
+
+Each model in `models/` has its own Data Generating Process (DGP) that **exactly matches** the model specification. This ensures unbiased parameter recovery when the model is correctly specified.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 1: CONFIGURE                                                   │
+│  config.json → Define TRUE parameter values                         │
+│  • Population size (N individuals, T choice tasks)                   │
+│  • True coefficients (ASC, B_FEE, B_DUR, etc.)                      │
+│  • Demographics distribution                                         │
+│  • Latent variables (for HCM/ICLV)                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 2: SIMULATE                                                    │
+│  simulate_full_data.py → Generate synthetic data                    │
+│  • Draw demographics from config distributions                       │
+│  • Compute utilities using TRUE parameters                          │
+│  • Simulate choices using Random Utility Model                      │
+│  • Output: data/simulated_data.csv                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 3: ESTIMATE                                                    │
+│  model.py → Recover parameters using Biogeme                        │
+│  • Load simulated data                                              │
+│  • Estimate model (MLE optimization)                                │
+│  • Compare estimates to TRUE values                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 4: OUTPUT                                                      │
+│  Saved to multiple locations:                                       │
+│  • results/parameter_comparison.csv   (estimates vs true)           │
+│  • results/estimation_results.csv     (full Biogeme output)         │
+│  • output/latex/                      (publication tables)          │
+│  • policy_analysis/                   (WTP, elasticities)           │
+│  • sample_stats/                      (descriptive statistics)      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Config.json Structure
+
+Each model's `config.json` defines the true parameters for simulation:
+
+```json
+{
+  "model_info": {
+    "name": "MNL Basic",
+    "true_values": {
+      "ASC_paid": 5.0,
+      "B_FEE": -0.08,
+      "B_DUR": -0.08
+    }
+  },
+  "population": {
+    "N": 500,
+    "T": 10,
+    "seed": 42
+  },
+  "choice_model": {
+    "fee_scale": 10000.0,
+    "attribute_terms": [...]
+  }
+}
+```
+
+**Key sections:**
+- `true_values`: Parameters you want to recover (ground truth)
+- `population.N`: Number of individuals to simulate
+- `population.T`: Choice tasks per individual
+- `population.seed`: Random seed for reproducibility
+
+### Validation Results
+
+| Model | Folder | True → Estimated | Bias | 95% CI Coverage |
+|-------|--------|------------------|------|-----------------|
+| MNL Basic | `models/mnl_basic/` | Unbiased | <2% | Yes |
+| MNL Demographics | `models/mnl_demographics/` | Unbiased | <2% | Yes |
+| MXL Basic | `models/mxl_basic/` | Good | <6% | Yes |
+| HCM Basic | `models/hcm_basic/` | **Attenuated** | ~50-66% | No (LV effect) |
+| HCM Full | `models/hcm_full/` | **Attenuated** | ~40-70% | No (all LV effects) |
+| ICLV | `models/iclv/` | Unbiased | ~2.4% | Yes |
+
+### Output Files
+
+| Location | File | Contents |
+|----------|------|----------|
+| `results/` | `parameter_comparison.csv` | True vs Estimated values, bias %, CI coverage |
+| `results/` | `estimation_results.csv` | Full Biogeme output (SE, t-stats, p-values) |
+| `output/latex/` | `*.tex` | Publication-ready LaTeX tables |
+| `policy_analysis/` | `wtp.csv`, `elasticity.csv` | Willingness-to-pay, elasticity calculations |
+| `sample_stats/` | `descriptives.csv` | Sample descriptive statistics |
+
+### Each Model Folder Contains
+
+```
+models/mnl_basic/
+├── config.json              # Model-specific true parameters
+├── simulate_full_data.py    # Standalone data generator
+├── model.py                 # Biogeme estimation
+├── run.py                   # Orchestrator (simulate → estimate)
+├── data/                    # Generated data
+├── results/                 # Estimation results
+├── output/latex/            # LaTeX tables
+├── policy_analysis/         # WTP, elasticity
+└── sample_stats/            # Descriptive statistics
+```
+
+---
+
+## Full Pipeline
+
+The `full_model/` folder implements the complete research framework with 32+ model specifications.
+
+### Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        SIMULATION MODULE                             │
+│  config/model_config.json → src/simulation/                │
+│  • Demographics (age, education, income)                            │
+│  • Latent variables (patriotism, secularism constructs)            │
+│  • Likert scale responses (5-point ordered probit)                 │
+│  • Choice behavior (random utility maximization)                    │
+└─────────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ESTIMATION MODULE                             │
+│  scripts/run_all_models.py → MNL → MXL → HCM → ICLV                │
+│  • MNL: Baseline + demographics + extended (8 specs)               │
+│  • MXL: Random parameters + extended (8 specs)                     │
+│  • HCM: Two-stage latent variables + extended (8 specs)            │
+│  • ICLV: Simultaneous estimation (unbiased)                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                     VALIDATION & OUTPUT                              │
+│  • Compare estimates to TRUE parameters (simulation validation)     │
+│  • Model comparison: AIC, BIC, likelihood ratio tests              │
+│  • LaTeX tables for publication                                     │
+│  • Parameter recovery metrics (bias, RMSE, coverage)               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Computational Requirements
+
+
+### Computational Requirements
+
+| Resource | Minimum | Recommended | High-Performance |
+|----------|---------|-------------|-------------------|
+| RAM | 8 GB | 16 GB | 128+ GB |
+| CPU Cores | 2 | 4+ | 32+ cores |
+| Disk Space | 1 GB | 5 GB | 50+ GB |
+| Time | ~30 min | ~60 min | ~6-10 min |
+| GPU Support | Optional | Recommended | CUDA-enabled |
+
+**Note:** High-performance configurations with 10x computational power enable parallel model estimation across all 32+ specifications simultaneously.
+
 
 ---
 
@@ -281,45 +407,18 @@ DCM-Research/
 
 ## Usage Examples
 
-### Basic MNL Estimation
+### Isolated Model (Quick Validation)
 
-```python
-from src.models.mnl_basic import estimate_mnl_basic
+```bash
+# Run MNL Basic
+cd models/mnl_basic
+python run.py
 
-result = estimate_mnl_basic(
-    data_path='data/simulated/full_scale_test.csv',
-    config_path='config/model_config.json',
-    output_dir='results/all_models'
-)
-print(f"Log-likelihood: {result['log_likelihood']:.2f}")
-print(f"AIC: {result['aic']:.2f}")
+# Check results
+cat results/parameter_estimates.csv
 ```
 
-### Mixed Logit with Random Coefficients
-
-```python
-from src.models.mxl_extended import run_mxl_extended
-
-results, comparison = run_mxl_extended(
-    data_path='data/simulated/full_scale_test.csv',
-    output_dir='results/all_models',
-    n_draws=500
-)
-print(comparison.to_string())
-```
-
-### HCM with Latent Variables
-
-```python
-from src.models.hcm_extended import run_hcm_extended
-
-results, comparison = run_hcm_extended(
-    data_path='data/simulated/full_scale_test.csv',
-    output_dir='results/all_models'
-)
-```
-
-### ICLV Simultaneous Estimation
+### Full Pipeline (Research)
 
 ```python
 from src.models.iclv import estimate_iclv
@@ -332,31 +431,13 @@ result = estimate_iclv(
     },
     covariates=['age_c', 'income_c'],
     choice_col='CHOICE',
-    attribute_cols=['fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3'],
-    lv_effects={
-        'pat_blind': 'beta_patriotism',
-        'sec_dl': 'beta_secularism'
-    },
     n_draws=500,
-    auto_scale=True,      # Automatic fee scaling
-    use_panel=True,       # Panel-corrected SE
-    use_two_stage_start=True  # Better convergence
+    auto_scale=True,
+    use_panel=True
 )
 
 print(f"Log-likelihood: {result.log_likelihood:.2f}")
 print(f"Converged: {result.convergence}")
-```
-
-### Run Full Pipeline
-
-```python
-# Run all 32+ models
-python scripts/run_all_models.py
-
-# Results saved to:
-# - results/all_models/model_comparison.csv
-# - results/all_models/parameter_estimates.csv
-# - output/latex/MNL/, output/latex/MXL/, etc.
 ```
 
 ---
@@ -372,8 +453,7 @@ python scripts/run_all_models.py
     "n_choice_tasks": 10
   },
   "demographics": {
-    "age_idx": {"distribution": "categorical", "probabilities": [0.2, 0.3, 0.3, 0.2]},
-    "income_indiv_idx": {"distribution": "categorical", "probabilities": [0.25, 0.35, 0.25, 0.15]}
+    "age_idx": {"distribution": "categorical", "probabilities": [0.2, 0.3, 0.3, 0.2]}
   },
   "latent_variables": {
     "pat_blind": {
@@ -381,21 +461,10 @@ python scripts/run_all_models.py
       "variance": 1.0
     }
   },
-  "measurement_model": {
-    "pat_blind_1": {"construct": "pat_blind", "loading": 1.0},
-    "pat_blind_2": {"construct": "pat_blind", "loading": 0.85},
-    "pat_blind_3": {"construct": "pat_blind", "loading": 0.78}
-  },
   "choice_model": {
-    "base_terms": [
-      {"name": "ASC_paid", "coef": 2.0}
-    ],
+    "base_terms": [{"name": "ASC_paid", "coef": 2.0}],
     "attribute_terms": [
-      {"name": "b_fee10k", "attribute": "fee", "scale": 10000, "base_coef": -0.5},
-      {"name": "b_dur", "attribute": "dur", "base_coef": -0.025}
-    ],
-    "lv_interactions": [
-      {"name": "b_fee_pat_blind", "attribute": "fee", "lv": "pat_blind", "coef": 0.15}
+      {"name": "b_fee10k", "attribute": "fee", "scale": 10000, "base_coef": -0.5}
     ]
   }
 }
@@ -405,9 +474,9 @@ python scripts/run_all_models.py
 
 ## For Real Data
 
-When you have real survey data:
+When using real survey data:
 
-1. **Format Data**: Match the expected column structure
+1. **Format Data**: Match expected column structure
    ```
    ID, CHOICE, fee1, fee2, fee3, dur1, dur2, dur3,
    pat_blind_1, pat_blind_2, pat_blind_3, ...,
@@ -421,46 +490,30 @@ When you have real survey data:
    python scripts/run_all_models.py --data path/to/your/data.csv
    ```
 
-4. **Note**: True parameter comparison will be skipped automatically when config doesn't have true values defined.
-
 ---
 
 ## API Reference
 
 ### Models
 
-| Module | Main Function | Description |
-|--------|---------------|-------------|
+| Module | Function | Description |
+|--------|----------|-------------|
 | `mnl_basic` | `estimate_mnl_basic()` | Basic MNL estimation |
 | `mnl_extended` | `run_mnl_extended()` | 8 MNL specifications |
 | `mxl_basic` | `estimate_mxl_basic()` | Basic MXL estimation |
 | `mxl_extended` | `run_mxl_extended()` | 8 MXL specifications |
 | `hcm_basic` | `estimate_hcm_basic()` | Single LV HCM |
 | `hcm_extended` | `run_hcm_extended()` | 8 HCM specifications |
-| `iclv` | `estimate_iclv()` | ICLV simultaneous estimation |
+| `iclv` | `estimate_iclv()` | ICLV simultaneous |
 
 ### ICLV Enhanced Features
 
 | Feature | Parameter | Description |
 |---------|-----------|-------------|
-| Auto-scaling | `auto_scale=True` | Scales large fee values automatically |
-| Two-stage start | `use_two_stage_start=True` | Better starting values |
+| Auto-scaling | `auto_scale=True` | Scales large fee values |
+| Two-stage start | `use_two_stage_start=True` | Better convergence |
 | Panel support | `use_panel=True` | Cluster-robust SE |
 | Robust SE | `compute_robust_se=True` | Sandwich estimator |
-| LV correlation | `estimate_lv_correlation=True` | Correlated LVs |
-
-### Comparison Tools
-
-```python
-from src.models.iclv import compare_two_stage_vs_iclv, summarize_attenuation_bias
-
-# Compare HCM (two-stage) vs ICLV (simultaneous)
-comparison = compare_two_stage_vs_iclv(hcm_results, iclv_result, true_values)
-summary = summarize_attenuation_bias(comparison)
-
-print(f"Mean attenuation bias: {summary['mean_attenuation_%']:.1f}%")
-print(f"ICLV RMSE improvement: {summary['rmse_improvement_%']:.1f}%")
-```
 
 ---
 
@@ -468,16 +521,13 @@ print(f"ICLV RMSE improvement: {summary['rmse_improvement_%']:.1f}%")
 
 ### Two-Stage HCM vs ICLV
 
-The HCM models use a **two-stage approach**:
-1. Estimate latent variables from Likert items (CFA/weighted average)
-2. Use LV estimates as fixed regressors in choice model
+**HCM (two-stage)** causes **attenuation bias** (~15-50%):
+1. Estimate latent variables from Likert items
+2. Use LV estimates as fixed regressors → measurement error ignored
 
-This causes **attenuation bias** - LV effects are underestimated by ~15-30%.
-
-The ICLV module provides **simultaneous estimation** that eliminates this bias by:
-- Integrating over the LV distribution
-- Jointly estimating measurement, structural, and choice models
-- Using simulation (SML) to handle the integrals
+**ICLV (simultaneous)** eliminates this bias:
+1. Integrate over the LV distribution
+2. Jointly estimate measurement + choice models
 
 ### When to Use Each
 
@@ -505,14 +555,11 @@ matplotlib>=3.4.0
 
 ## Citation
 
-If you use this framework in your research, please cite:
-
 ```bibtex
 @software{dcm_research_framework,
   title = {Discrete Choice Modeling Research Framework},
-  author = {DCM Research Team},
-  year = {2025},
-  url = {https://github.com/your-repo}
+  author = {Mülayim, Hakan and Girengir, Giray and Azeritürk, Ataol},
+  year = {2025}
 }
 ```
 
@@ -535,6 +582,5 @@ MIT License - See LICENSE file for details.
 
 ## Support
 
-- Issues: [GitHub Issues](https://github.com/your-repo/issues)
 - Documentation: See `docs/` folder
 - Quick Start: See `docs/QUICK_START.md`
