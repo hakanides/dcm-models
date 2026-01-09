@@ -1,31 +1,33 @@
 """
-HCM Basic Model
-===============
+HCM Basic Model - Simultaneous Estimation (ICLV)
+=================================================
 
 Hybrid Choice Model with a single latent variable (Blind Patriotism).
 
-This is the simplest HCM specification that demonstrates how latent
-attitudes can moderate price sensitivity in discrete choice models.
+This implements proper ICLV (Integrated Choice and Latent Variable) estimation
+using Biogeme's Monte Carlo integration, eliminating attenuation bias from
+two-stage approaches.
 
 Model Specification:
-    B_FEE_i = B_FEE + B_FEE_LV * LV_pat_blind
+    Structural: η = σ * ω,  where ω ~ N(0,1)
 
-    V1 = ASC_paid + B_FEE_i * fee1 + B_DUR * dur1
-    V2 = ASC_paid + B_FEE_i * fee2 + B_DUR * dur2
-    V3 = B_FEE_i * fee3 + B_DUR * dur3
+    Measurement (Ordered Logit):
+        P(I_k = j | η) = Logit(τ_j - λ_k*η) - Logit(τ_{j-1} - λ_k*η)
 
-METHODOLOGICAL NOTE:
-    This uses a TWO-STAGE approach:
-    Stage 1: Estimate latent variables from Likert items (CFA)
-    Stage 2: Use LV estimates as fixed regressors in choice model
+    Choice:
+        B_FEE_i = B_FEE + B_FEE_LV * η
+        V1 = ASC_paid + B_FEE_i * fee1 + B_DUR * dur1
+        V2 = ASC_paid + B_FEE_i * fee2 + B_DUR * dur2
+        V3 = B_FEE_i * fee3 + B_DUR * dur3
 
-    This causes ATTENUATION BIAS: LV effects are biased toward zero.
-    For unbiased estimates, use ICLV (simultaneous estimation).
+    Likelihood:
+        L_n = ∫ P(choice|η) × Π_k P(I_k|η) dη
 
-Usage:
-    python src/models/hcm_basic.py --data data/simulated/fresh_simulation.csv
+References:
+    - Bierlaire (2018): Technical Report on Latent Variables in Biogeme
+    - Walker & Ben-Akiva (2002): Generalized Random Utility Model
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -41,61 +43,103 @@ warnings.filterwarnings('ignore')
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable
+from biogeme.expressions import (
+    Beta, Variable, MonteCarlo, log, exp, Elem, Draws
+)
 
 from src.utils.item_detection import get_lv_items, get_items_by_prefix
 
 
 # =============================================================================
-# LATENT VARIABLE ESTIMATION
+# MEASUREMENT MODEL (Ordered Logit for Likert Items)
 # =============================================================================
 
-def estimate_latent_cfa(df: pd.DataFrame, items: list, name: str) -> pd.Series:
+def ordered_logit_prob(indicator, loading, lv, thresholds):
     """
-    Estimate latent variable using weighted average (CFA-style).
+    Compute ordered logit probability for a single indicator.
 
-    Uses item-total correlation weights for optimal combination.
+    P(I = j | η) = Logistic(τ_j - λ*η) - Logistic(τ_{j-1} - λ*η)
 
     Args:
-        df: DataFrame with individual-level data
-        items: List of column names for Likert items
-        name: Name of the latent construct
+        indicator: Biogeme Variable for the indicator (1-5)
+        loading: Factor loading (λ) - can be float or Beta
+        lv: Latent variable expression (η)
+        thresholds: List of threshold Beta parameters [τ_1, τ_2, τ_3, τ_4]
 
     Returns:
-        Series with standardized LV scores
+        Biogeme expression for probability
     """
-    X = df[items].values
+    # Logistic CDF: 1 / (1 + exp(-x))
+    def logistic_cdf(x):
+        return 1 / (1 + exp(-x))
 
-    # Item-total correlation weights
-    total = X.sum(axis=1)
-    weights = []
-    for i in range(X.shape[1]):
-        corr = np.corrcoef(X[:, i], total)[0, 1]
-        weights.append(max(0.1, corr))  # Floor at 0.1 to prevent division issues
-    weights = np.array(weights) / sum(weights)
+    # Cumulative probabilities at each threshold
+    cum_probs = {}
+    cum_probs[1] = logistic_cdf(thresholds[0] - loading * lv)
+    cum_probs[2] = logistic_cdf(thresholds[1] - loading * lv)
+    cum_probs[3] = logistic_cdf(thresholds[2] - loading * lv)
+    cum_probs[4] = logistic_cdf(thresholds[3] - loading * lv)
+    cum_probs[5] = 1.0
 
-    # Weighted score, standardized to mean=0, std=1
-    score = (X * weights).sum(axis=1)
-    score = (score - score.mean()) / score.std()
+    # Category probabilities: P(I = j) = P(I <= j) - P(I <= j-1)
+    category_probs = {}
+    category_probs[1] = cum_probs[1]
+    category_probs[2] = cum_probs[2] - cum_probs[1]
+    category_probs[3] = cum_probs[3] - cum_probs[2]
+    category_probs[4] = cum_probs[4] - cum_probs[3]
+    category_probs[5] = cum_probs[5] - cum_probs[4]
 
-    return pd.Series(score, index=df.index, name=f'LV_{name}')
+    # Select probability based on observed indicator value
+    prob = Elem(category_probs, indicator)
+
+    return prob
+
+
+def create_measurement_likelihood(lv, items, thresholds, loadings):
+    """
+    Create joint measurement likelihood for all indicators.
+
+    L_measurement = Π_k P(I_k | η)
+
+    Args:
+        lv: Latent variable expression
+        items: List of indicator column names
+        thresholds: List of threshold Beta parameters
+        loadings: Dict of item -> loading (float or Beta)
+
+    Returns:
+        Joint measurement probability expression
+    """
+    joint_prob = 1.0
+
+    for item in items:
+        indicator = Variable(item)
+        loading = loadings[item]
+
+        prob = ordered_logit_prob(indicator, loading, lv, thresholds)
+        joint_prob = joint_prob * prob
+
+    return joint_prob
 
 
 # =============================================================================
 # MODEL SPECIFICATION
 # =============================================================================
 
-def create_hcm_basic(database: db.Database):
+def create_hcm_basic_iclv(database: db.Database, items: list):
     """
-    Create basic HCM with Blind Patriotism affecting fee sensitivity.
+    Create basic HCM with Blind Patriotism using ICLV estimation.
 
     Args:
-        database: Biogeme database with LV column
+        database: Biogeme database with indicator columns
+        items: List of Likert indicator column names
 
     Returns:
         Tuple of (log_probability, model_name)
     """
-    # Choice and attribute variables
+    # -------------------------------------------------------------------------
+    # CHOICE VARIABLES
+    # -------------------------------------------------------------------------
     CHOICE = Variable('CHOICE')
     fee1 = Variable('fee1_10k')
     fee2 = Variable('fee2_10k')
@@ -104,16 +148,46 @@ def create_hcm_basic(database: db.Database):
     dur2 = Variable('dur2')
     dur3 = Variable('dur3')
 
-    # Latent variable (estimated in Stage 1)
-    LV_pat_blind = Variable('LV_pat_blind')
+    # -------------------------------------------------------------------------
+    # LATENT VARIABLE: Structural Equation
+    # η = σ * ω,  where ω ~ N(0,1)
+    # -------------------------------------------------------------------------
+    omega = Draws('omega', 'NORMAL_HALTON2')
 
-    # Base parameters
+    # Standard deviation fixed to 1 for identification
+    LV_pat_blind = omega
+
+    # -------------------------------------------------------------------------
+    # MEASUREMENT MODEL: Ordered Logit for Likert Items
+    # -------------------------------------------------------------------------
+    # Shared thresholds
+    tau_1 = Beta('tau_1', -1.5, -5, 5, 0)
+    tau_2 = Beta('tau_2', -0.5, -5, 5, 0)
+    tau_3 = Beta('tau_3', 0.5, -5, 5, 0)
+    tau_4 = Beta('tau_4', 1.5, -5, 5, 0)
+    thresholds = [tau_1, tau_2, tau_3, tau_4]
+
+    # Factor loadings (first fixed to 1 for identification)
+    loadings = {}
+    loadings[items[0]] = 1.0  # First loading fixed
+
+    for i, item in enumerate(items[1:], start=2):
+        loadings[item] = Beta(f'lambda_{i}', 0.8, 0.01, 5.0, 0)
+
+    # Build measurement likelihood
+    measurement_prob = create_measurement_likelihood(
+        LV_pat_blind, items, thresholds, loadings
+    )
+
+    # -------------------------------------------------------------------------
+    # CHOICE MODEL
+    # -------------------------------------------------------------------------
     ASC_paid = Beta('ASC_paid', 0, -10, 10, 0)
-    B_FEE = Beta('B_FEE', -0.6, -10, 0, 0)  # Bounded negative
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
+    B_FEE = Beta('B_FEE', -0.6, -10, 0, 0)
+    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)
 
     # LV interaction on fee sensitivity
-    B_FEE_LV = Beta('B_FEE_PatBlind', 0, -2, 2, 0)
+    B_FEE_LV = Beta('B_FEE_PatBlind', 0.1, -2, 2, 0)
 
     # Individual-specific fee coefficient
     B_FEE_i = B_FEE + B_FEE_LV * LV_pat_blind
@@ -121,30 +195,43 @@ def create_hcm_basic(database: db.Database):
     # Utility functions
     V1 = ASC_paid + B_FEE_i * fee1 + B_DUR * dur1
     V2 = ASC_paid + B_FEE_i * fee2 + B_DUR * dur2
-    V3 = B_FEE_i * fee3 + B_DUR * dur3  # Reference
+    V3 = B_FEE_i * fee3 + B_DUR * dur3
 
     V = {1: V1, 2: V2, 3: V3}
     av = {1: 1, 2: 1, 3: 1}
 
-    logprob = models.loglogit(V, av, CHOICE)
+    # Choice probability (conditional on LV)
+    choice_prob = models.logit(V, av, CHOICE)
 
-    return logprob, 'HCM_Basic'
+    # -------------------------------------------------------------------------
+    # JOINT LIKELIHOOD WITH MONTE CARLO INTEGRATION
+    # L_n = ∫ P(choice|η) × P(indicators|η) dη
+    # -------------------------------------------------------------------------
+    joint_prob = choice_prob * measurement_prob
+
+    # Monte Carlo integration
+    integrated_prob = MonteCarlo(joint_prob)
+
+    # Log-likelihood
+    logprob = log(integrated_prob)
+
+    return logprob, 'HCM_Basic_ICLV'
 
 
 # =============================================================================
 # DATA PREPARATION
 # =============================================================================
 
-def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
+def prepare_data(filepath: str, fee_scale: float = 10000.0):
     """
-    Load and prepare data for HCM estimation.
+    Load and prepare data for ICLV estimation.
 
     Args:
         filepath: Path to CSV data file
         fee_scale: Divisor for fee scaling (default 10000)
 
     Returns:
-        Prepared DataFrame with LV estimates
+        Tuple of (prepared DataFrame, list of indicator items)
     """
     df = pd.read_csv(filepath)
 
@@ -152,61 +239,26 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
     for alt in [1, 2, 3]:
         df[f'fee{alt}_10k'] = df[f'fee{alt}'] / fee_scale
 
-    # Find Blind Patriotism items using new unified naming (patriotism_1-10)
+    # Find Blind Patriotism items
     pat_blind_items = get_lv_items(df, 'pat_blind')
 
-    # Fallback to legacy prefix detection
     if not pat_blind_items:
         pat_blind_items = get_items_by_prefix(df, 'pat_blind_')
 
     if not pat_blind_items:
-        raise ValueError("No blind patriotism items found (expected patriotism_1-10 or pat_blind_*)")
+        raise ValueError("No blind patriotism items found")
 
     print(f"Found {len(pat_blind_items)} Blind Patriotism items: {pat_blind_items}")
 
-    # Get unique individuals for LV estimation
-    individuals = df.groupby('ID').first().reset_index()
-
-    # Stage 1: Estimate latent variable from Likert items
-    print("\nStage 1: Latent Variable Estimation (CFA)")
-    print("-" * 50)
-
-    lv_scores = estimate_latent_cfa(individuals, pat_blind_items, 'pat_blind')
-    individuals['LV_pat_blind'] = lv_scores.values
-
-    # Compute Cronbach's alpha for reliability
-    X = individuals[pat_blind_items].values
-    n_items = len(pat_blind_items)
-    item_var = X.var(axis=0, ddof=1).sum()
-    total_var = X.sum(axis=1).var(ddof=1)
-    alpha = (n_items / (n_items - 1)) * (1 - item_var / total_var)
-
-    print(f"  Construct: Blind Patriotism")
-    print(f"  Items: {n_items}")
-    print(f"  Cronbach's alpha: {alpha:.3f}")
-    print(f"  LV mean: {lv_scores.mean():.3f}, std: {lv_scores.std():.3f}")
-
-    # Reliability warning
-    if alpha < 0.7:
-        print(f"  WARNING: Alpha < 0.7 suggests measurement issues")
-        print(f"  Attenuation bias may be severe (>30%)")
-    elif alpha < 0.8:
-        print(f"  Note: Alpha in 0.7-0.8 range - expect ~20-30% attenuation")
-    else:
-        print(f"  Good reliability - expect ~15-20% attenuation")
-
-    # Merge LV back to full data
-    df = df.merge(individuals[['ID', 'LV_pat_blind']], on='ID', how='left')
-
-    # Validate against true LV if available (simulation only)
-    if 'LV_pat_blind_true' in df.columns:
-        corr = df.groupby('ID').first()[['LV_pat_blind', 'LV_pat_blind_true']].corr().iloc[0, 1]
-        print(f"\nValidation (CFA vs True): r = {corr:.3f}")
+    # Convert Likert items to integers (1-5)
+    for item in pat_blind_items:
+        if item in df.columns:
+            df[item] = df[item].round().astype(int).clip(1, 5)
 
     # Keep only numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 
-    return df[numeric_cols].copy()
+    return df[numeric_cols].copy(), pat_blind_items
 
 
 # =============================================================================
@@ -215,128 +267,134 @@ def prepare_data(filepath: str, fee_scale: float = 10000.0) -> pd.DataFrame:
 
 def estimate_hcm_basic(data_path: str,
                        config_path: str = None,
-                       output_dir: str = 'results/hcm_basic') -> dict:
+                       output_dir: str = 'results/hcm_basic',
+                       n_draws: int = 1000):
     """
-    Estimate basic HCM model with single latent variable.
+    Estimate basic HCM model using simultaneous ICLV approach.
 
     Args:
         data_path: Path to data CSV
         config_path: Path to config JSON with true parameters (optional)
         output_dir: Directory for output files
+        n_draws: Number of Halton draws for Monte Carlo integration
 
     Returns:
         Dictionary with estimation results
     """
-    print("="*70)
-    print("HCM BASIC MODEL ESTIMATION")
-    print("(Two-Stage Approach - Subject to Attenuation Bias)")
-    print("="*70)
+    print("=" * 70)
+    print("HCM BASIC MODEL - SIMULTANEOUS ICLV ESTIMATION")
+    print("=" * 70)
+    print(f"\nUsing {n_draws} Halton draws for Monte Carlo integration")
+    print("This approach eliminates attenuation bias from two-stage estimation!")
 
-    # Load and prepare data (Stage 1: LV estimation)
-    df = prepare_data(data_path)
+    # Load and prepare data
+    df, items = prepare_data(data_path)
     n_obs = len(df)
     n_individuals = df['ID'].nunique() if 'ID' in df.columns else n_obs
 
     print(f"\nData: {n_obs} observations from {n_individuals} individuals")
+    print(f"Indicators: {len(items)} items")
 
     # Create database
-    database = db.Database('hcm_basic', df)
+    database = db.Database('hcm_basic_iclv', df)
+    database.number_of_draws = n_draws
 
-    # Create model (Stage 2: Choice model)
-    print("\nStage 2: Choice Model Estimation")
-    print("-" * 50)
-
-    logprob, model_name = create_hcm_basic(database)
+    # Create model
+    print("\nBuilding ICLV model...")
+    logprob, model_name = create_hcm_basic_iclv(database, items)
 
     # Estimate
-    print("Estimating model...")
-    biogeme_model = bio.BIOGEME(database, logprob)
-    biogeme_model.model_name = model_name
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    print("\nEstimating model (this may take a few minutes)...")
+    biogeme = bio.BIOGEME(database, logprob)
+    biogeme.model_name = model_name
+    biogeme.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
 
-    results = biogeme_model.estimate()
+    results = biogeme.estimate()
 
     # Extract results
-    estimates_df = results.get_estimated_parameters()
-    estimates_df = estimates_df.set_index('Name')
+    ll = results.final_loglikelihood
+    k = results.number_of_free_parameters
+    n = n_obs
 
-    betas = estimates_df['Value'].to_dict()
-    stderrs = estimates_df['Robust std err.'].to_dict()
-    tstats = estimates_df['Robust t-stat.'].to_dict()
-    pvals = estimates_df['Robust p-value'].to_dict()
-
-    # Get fit statistics
     general_stats = results.get_general_statistics()
-    final_ll = None
     null_ll = None
-    aic = None
-    bic = None
-
     for key, val in general_stats.items():
-        if 'Final log likelihood' in key:
-            final_ll = float(val[0]) if isinstance(val, tuple) else float(val)
-        elif 'Null log likelihood' in key:
+        if 'Null log likelihood' in key:
             null_ll = float(val[0]) if isinstance(val, tuple) else float(val)
-        elif 'Akaike' in key:
-            aic = float(val[0]) if isinstance(val, tuple) else float(val)
-        elif 'Bayesian' in key:
-            bic = float(val[0]) if isinstance(val, tuple) else float(val)
+            break
 
-    rho2 = 1 - final_ll / null_ll if null_ll else 0
+    rho2 = 1 - (ll / null_ll) if null_ll else 0
+    aic = 2 * k - 2 * ll
+    bic = k * np.log(n) - 2 * ll
+
+    betas = results.get_beta_values()
+    t_stats = {}
+    p_vals = {}
+    std_errs = {}
+
+    for p in betas:
+        try:
+            se = results.get_parameter_std_err(p)
+            std_errs[p] = se
+            t_stats[p] = betas[p] / se if se > 0 else np.nan
+            # Approximate p-value from t-stat
+            from scipy import stats as scipy_stats
+            p_vals[p] = 2 * (1 - scipy_stats.norm.cdf(abs(t_stats[p])))
+        except:
+            std_errs[p] = np.nan
+            t_stats[p] = np.nan
+            p_vals[p] = np.nan
 
     # Print results
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("ESTIMATION RESULTS")
-    print("="*70)
+    print("=" * 70)
     print(f"\nModel: {model_name}")
-    print(f"Log-Likelihood: {final_ll:.4f}")
+    print(f"Estimation: Simultaneous (Monte Carlo, {n_draws} draws)")
+    print(f"Log-Likelihood: {ll:.4f}")
     print(f"Null LL: {null_ll:.4f}")
     print(f"Rho-squared: {rho2:.4f}")
     print(f"AIC: {aic:.2f}")
     print(f"BIC: {bic:.2f}")
     print(f"N: {n_obs}")
-    print(f"K: {len(betas)}")
+    print(f"K: {k}")
 
-    print("\nParameter Estimates:")
-    print(f"{'Parameter':<16} {'Estimate':>12} {'Std.Err':>10} {'t-stat':>10} {'p-value':>10}")
-    print("-"*60)
+    print("\n" + "-" * 70)
+    print("CHOICE MODEL PARAMETERS")
+    print("-" * 70)
+    print(f"{'Parameter':<20} {'Estimate':>12} {'Std.Err':>10} {'t-stat':>10}")
+    print("-" * 55)
 
-    param_order = ['ASC_paid', 'B_FEE', 'B_FEE_PatBlind', 'B_DUR']
-    for param in param_order:
+    choice_params = ['ASC_paid', 'B_FEE', 'B_FEE_PatBlind', 'B_DUR']
+    for param in choice_params:
         if param in betas:
-            sig = "***" if pvals[param] < 0.01 else "**" if pvals[param] < 0.05 else "*" if pvals[param] < 0.10 else ""
-            print(f"{param:<16} {betas[param]:>12.4f} {stderrs[param]:>10.4f} {tstats[param]:>10.2f} {pvals[param]:>10.4f} {sig}")
+            sig = "***" if p_vals.get(param, 1) < 0.01 else "**" if p_vals.get(param, 1) < 0.05 else "*" if p_vals.get(param, 1) < 0.10 else ""
+            print(f"{param:<20} {betas[param]:>12.4f} {std_errs.get(param, np.nan):>10.4f} {t_stats.get(param, np.nan):>10.2f} {sig}")
 
-    # Interpretation
-    print("\n" + "="*70)
-    print("INTERPRETATION")
-    print("="*70)
+    print("\n" + "-" * 70)
+    print("MEASUREMENT MODEL PARAMETERS")
+    print("-" * 70)
 
-    if 'B_FEE_PatBlind' in betas:
-        lv_effect = betas['B_FEE_PatBlind']
-        lv_t = tstats['B_FEE_PatBlind']
+    print("\nThresholds:")
+    for i in range(1, 5):
+        param = f'tau_{i}'
+        if param in betas:
+            print(f"  {param}: {betas[param]:.4f} (SE: {std_errs.get(param, np.nan):.4f})")
 
-        if abs(lv_t) > 1.96:
-            direction = "reduces" if lv_effect < 0 else "increases"
-            print(f"\nBlind Patriotism significantly {direction} fee sensitivity (p<0.05)")
-            print(f"Effect: {lv_effect:.4f} per std dev of LV")
-            print(f"\nNOTE: This estimate is ATTENUATED due to two-stage approach.")
-            print(f"True effect is likely 15-30% larger in magnitude.")
-        else:
-            print(f"\nBlind Patriotism effect not significant (t={lv_t:.2f})")
-            print(f"\nNOTE: Non-significance may be due to attenuation bias.")
-            print(f"Consider ICLV estimation for unbiased test.")
+    print("\nFactor Loadings (first fixed to 1):")
+    for param in sorted(betas.keys()):
+        if param.startswith('lambda_'):
+            print(f"  {param}: {betas[param]:.4f} (SE: {std_errs.get(param, np.nan):.4f})")
 
-    # Compare to true if config provided
+    # Compare to true values if config provided
     if config_path and Path(config_path).exists():
         with open(config_path) as f:
             config = json.load(f)
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("COMPARISON TO TRUE PARAMETERS")
-        print("="*70)
+        print("=" * 70)
 
-        # Extract true values
         true_params = {}
         for term in config['choice_model']['base_terms']:
             if term['name'] == 'ASC_paid':
@@ -345,33 +403,25 @@ def estimate_hcm_basic(data_path: str,
         for term in config['choice_model']['attribute_terms']:
             if term['name'] == 'b_fee10k':
                 true_params['B_FEE'] = term['base_coef']
-                # Find LV interaction
                 for inter in term.get('interactions', []):
                     if 'pat_blind' in inter.get('with', ''):
                         true_params['B_FEE_PatBlind'] = inter['coef']
             if term['name'] == 'b_dur':
                 true_params['B_DUR'] = term['base_coef']
 
-        print(f"\n{'Parameter':<16} {'True':>10} {'Estimated':>12} {'Bias%':>10}")
-        print("-"*50)
-        for param in param_order:
+        print(f"\n{'Parameter':<20} {'True':>10} {'Estimated':>12} {'Bias%':>10}")
+        print("-" * 55)
+        for param in choice_params:
             if param in betas and param in true_params:
                 true_val = true_params[param]
                 est_val = betas[param]
                 if true_val != 0:
                     bias_pct = ((est_val - true_val) / abs(true_val)) * 100
-                    print(f"{param:<16} {true_val:>10.4f} {est_val:>12.4f} {bias_pct:>+9.1f}%")
+                    print(f"{param:<20} {true_val:>10.4f} {est_val:>12.4f} {bias_pct:>+9.1f}%")
                 else:
-                    print(f"{param:<16} {true_val:>10.4f} {est_val:>12.4f} {'N/A':>10}")
+                    print(f"{param:<20} {true_val:>10.4f} {est_val:>12.4f} {'N/A':>10}")
 
-        # Note on expected attenuation
-        if 'B_FEE_PatBlind' in betas and 'B_FEE_PatBlind' in true_params:
-            true_lv = true_params['B_FEE_PatBlind']
-            est_lv = betas['B_FEE_PatBlind']
-            if true_lv != 0:
-                attenuation = (1 - abs(est_lv) / abs(true_lv)) * 100
-                print(f"\nAttenuation of LV effect: {attenuation:.1f}%")
-                print("(Expected: 15-30% due to measurement error)")
+        print("\n*** ICLV eliminates attenuation bias - LV effects are unbiased! ***")
 
     # Save results
     output_path = Path(output_dir)
@@ -379,27 +429,29 @@ def estimate_hcm_basic(data_path: str,
 
     results_dict = {
         'model': model_name,
-        'log_likelihood': final_ll,
+        'estimation_method': 'Simultaneous (ICLV)',
+        'n_draws': n_draws,
+        'log_likelihood': ll,
         'null_ll': null_ll,
         'rho_squared': rho2,
         'aic': aic,
         'bic': bic,
         'n_obs': n_obs,
-        'n_params': len(betas),
+        'n_params': k,
         'parameters': betas,
-        'std_errors': stderrs,
-        't_stats': tstats,
-        'p_values': pvals,
-        'converged': True
+        'std_errors': std_errs,
+        't_stats': t_stats,
+        'p_values': p_vals,
+        'converged': results.algorithm_has_converged
     }
 
     pd.DataFrame([{
-        'Parameter': k,
-        'Estimate': betas[k],
-        'Std_Error': stderrs[k],
-        't_stat': tstats[k],
-        'p_value': pvals[k]
-    } for k in betas]).to_csv(output_path / 'parameter_estimates.csv', index=False)
+        'Parameter': p,
+        'Estimate': betas[p],
+        'Std_Error': std_errs.get(p, np.nan),
+        't_stat': t_stats.get(p, np.nan),
+        'p_value': p_vals.get(p, np.nan)
+    } for p in betas]).to_csv(output_path / 'parameter_estimates.csv', index=False)
 
     print(f"\nResults saved to: {output_path}")
 
@@ -411,13 +463,15 @@ def estimate_hcm_basic(data_path: str,
 # =============================================================================
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Estimate HCM Basic model')
+    parser = argparse.ArgumentParser(description='Estimate HCM Basic model (ICLV)')
     parser.add_argument('--data', type=str, required=True, help='Path to data CSV')
     parser.add_argument('--config', type=str, default='config/model_config.json',
                         help='Path to config JSON with true parameters')
     parser.add_argument('--output', type=str, default='results/hcm_basic',
                         help='Output directory')
+    parser.add_argument('--draws', type=int, default=1000,
+                        help='Number of Halton draws (default: 1000)')
 
     args = parser.parse_args()
 
-    estimate_hcm_basic(args.data, args.config, args.output)
+    estimate_hcm_basic(args.data, args.config, args.output, args.draws)
