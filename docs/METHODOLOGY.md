@@ -10,16 +10,17 @@ This document provides comprehensive methodological documentation for the DCM es
 
 1. [Random Utility Model (RUM) Framework](#1-random-utility-model-rum-framework)
 2. [Model Hierarchy](#2-model-hierarchy)
-3. [Data Generating Process (DGP)](#3-data-generating-process-dgp)
-4. [Measurement Model](#4-measurement-model)
-5. [Two-Stage vs Simultaneous Estimation](#5-two-stage-vs-simultaneous-estimation)
-6. [Policy Analysis Methodology](#6-policy-analysis-methodology)
-7. [Configuration System](#7-configuration-system)
-8. [Isolated Model Validation Workflow](#8-isolated-model-validation-workflow)
-9. [Extended Model Specifications](#9-extended-model-specifications)
-10. [Validation Metrics](#10-validation-metrics)
-11. [LaTeX Output Format](#11-latex-output-format)
-12. [References](#12-references)
+3. [Experimental Design: Scenario Generation](#3-experimental-design-scenario-generation)
+4. [Data Generating Process (DGP)](#4-data-generating-process-dgp)
+5. [Measurement Model](#5-measurement-model)
+6. [Two-Stage vs Simultaneous Estimation](#6-two-stage-vs-simultaneous-estimation)
+7. [Policy Analysis Methodology](#7-policy-analysis-methodology)
+8. [Configuration System](#8-configuration-system)
+9. [Isolated Model Validation Workflow](#9-isolated-model-validation-workflow)
+10. [Extended Model Specifications](#10-extended-model-specifications)
+11. [Validation Metrics](#11-validation-metrics)
+12. [LaTeX Output Format](#12-latex-output-format)
+13. [References](#13-references)
 
 ---
 
@@ -172,9 +173,175 @@ Joint likelihood: L_n = ∫ P(choice|η) × P(indicators|η) × f(η) dη
 
 ---
 
-## 3. Data Generating Process (DGP)
+## 3. Experimental Design: Scenario Generation
 
-### 3.1 Workflow Overview
+### 3.1 Overview
+
+The `generate_scenarios.py` script creates choice scenarios for discrete choice experiments. It produces a `scenarios_prepared.csv` file containing hypothetical choice sets that respondents evaluate in a survey context.
+
+**Script location**: `full_model/scripts/generate_scenarios.py`
+
+### 3.2 Choice Structure
+
+Each scenario presents **3 alternatives**:
+
+| Alternative | Description | Duration | Fee |
+|-------------|-------------|----------|-----|
+| 1 (Paid Option 1) | Variable | 1-23 weeks | 50,000 - 2,000,000 TL |
+| 2 (Paid Option 2) | Variable | 1-23 weeks | 50,000 - 2,000,000 TL |
+| 3 (Standard) | Fixed baseline | 24 weeks | 0 TL |
+
+### 3.3 Stratified-Factorial Design
+
+The key design innovation is **independent sampling** of fee and duration to avoid multicollinearity in estimation. The design space is divided into 4 quadrants:
+
+| Quadrant | Duration | Fee | Description |
+|----------|----------|-----|-------------|
+| Q1 | Short (1-11 wks) | High (500k-2M TL) | Premium fast-track |
+| Q2 | Short (1-11 wks) | Low (50k-500k TL) | Budget fast-track |
+| Q3 | Long (12-23 wks) | High (500k-2M TL) | Premium moderate reduction |
+| Q4 | Long (12-23 wks) | Low (50k-500k TL) | Budget moderate reduction |
+
+Scenarios are generated from all **16 quadrant-pair combinations** (Q1-Q1, Q1-Q2, ... Q4-Q4) with equal allocation to ensure:
+- Balanced coverage of the design space
+- Low fee-duration correlation (target: |r| < 0.25)
+- Proper parameter identification in MNL/MXL models
+
+### 3.4 Design Rationale
+
+**Problem**: If "shorter duration = higher fee" is enforced (as would be natural), fee and duration become highly correlated. This causes:
+- Multicollinearity in estimation
+- Difficulty separating fee and duration effects
+- Inflated standard errors
+
+**Solution**: The stratified-factorial approach samples fee and duration **independently within quadrants**, breaking the natural correlation while maintaining realistic scenarios.
+
+### 3.5 Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `generate_orthogonal_option()` | Creates a single paid option within a specified quadrant |
+| `generate_orthogonal_scenario()` | Creates a full scenario with two paid options |
+| `validate_scenario()` | Checks duration bounds, fee bounds, and rounding |
+| `check_dominance()` | Flags scenarios where one option dominates another |
+| `compute_correlation()` | Calculates Pearson correlation for design diagnostics |
+| `print_summary()` | Outputs statistics including critical correlation diagnostics |
+
+### 3.6 Validation Constraints
+
+The generator enforces these constraints:
+
+```
+Duration:
+- Paid options: 1-23 weeks (must be < standard 24 weeks)
+- Standard option: fixed at 24 weeks
+
+Fee:
+- Paid options: minimum 10,000 TL
+- Standard option: 0 TL (free)
+- All fees rounded to 1,000 TL increments
+
+Scenario validity:
+- Paid options cannot be identical (same duration AND fee)
+```
+
+### 3.7 Dominance Analysis
+
+The script flags (but does not reject) dominated alternatives:
+
+```
+Paid1 dominates Paid2 if: dur1 ≤ dur2 AND fee1 ≤ fee2 (with at least one strict)
+```
+
+Dominance is allowed in the stratified design but tracked for analysis. A high dominance rate may indicate design issues.
+
+### 3.8 Usage
+
+```bash
+# Default: 1000 scenarios
+python scripts/generate_scenarios.py
+
+# Custom options
+python scripts/generate_scenarios.py --n 500 --seed 42 --output data/raw/scenarios.csv
+
+# With analysis columns (adds tradeoff_type, ratios)
+python scripts/generate_scenarios.py --output-analysis data/processed/scenarios_analysis.csv
+
+# Quiet mode (suppress progress output)
+python scripts/generate_scenarios.py --quiet
+```
+
+### 3.9 Command-Line Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--n` | 1000 | Number of scenarios to generate |
+| `--standard-duration` | 24 | Standard service duration in weeks |
+| `--output` | `data/raw/scenarios_prepared.csv` | Output file path |
+| `--output-analysis` | None | Optional output with analysis columns |
+| `--seed` | None | Random seed for reproducibility |
+| `--quiet` | False | Suppress progress output |
+
+### 3.10 Output Format
+
+**Main CSV** (`scenarios_prepared.csv`):
+
+```csv
+scenario_id,dur1,dur2,dur3,fee1,fee2,fee3,exempt1,exempt2,exempt3
+1,8,15,24,750000,200000,0,1,1,0
+2,3,20,24,1200000,450000,0,1,1,0
+...
+```
+
+**Analysis CSV** (optional): Adds diagnostic columns:
+- `tradeoff_type`: Categorizes scenario (Paid1_shorter_expensive, etc.)
+- `duration_ratio`: dur1/dur2
+- `price_ratio`: fee1/fee2
+- `ratio_difference`: |duration_ratio - price_ratio|
+
+### 3.11 Correlation Diagnostics
+
+The script outputs critical correlation diagnostics:
+
+```
+CORRELATION DIAGNOSTICS (target: |r| < 0.25)
+============================================================
+  Paid Option 1 (dur1 vs fee1): r = +0.012  PASS
+  Paid Option 2 (dur2 vs fee2): r = -0.008  PASS
+  Pooled (all dur vs fee):      r = +0.003  PASS
+```
+
+**Interpretation**:
+- |r| < 0.25: Good design, parameters well-identified
+- |r| > 0.25: Warning - potential multicollinearity issues
+- |r| > 0.50: Consider regenerating with different parameters
+
+### 3.12 Integration with DGP
+
+The generated scenarios feed into the Data Generating Process:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  generate_scenarios.py                                               │
+│  → Creates scenarios_prepared.csv with choice sets                  │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  simulate_full_data.py                                               │
+│  → Loads scenarios, assigns to individuals, simulates choices       │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  model.py                                                            │
+│  → Estimates parameters from simulated choice data                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4. Data Generating Process (DGP)
+
+### 4.1 Workflow Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -213,7 +380,7 @@ Joint likelihood: L_n = ∫ P(choice|η) × P(indicators|η) × f(η) dη
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 Demographics Generation
+### 4.2 Demographics Generation
 
 Demographics are drawn from categorical distributions specified in config:
 
@@ -233,7 +400,7 @@ Demographics are drawn from categorical distributions specified in config:
 }
 ```
 
-### 3.3 Latent Variable Generation
+### 4.3 Latent Variable Generation
 
 Latent variables are generated from a structural model:
 
@@ -260,7 +427,7 @@ lv_true = (
 
 **Note**: Demographics are centered (e.g., `age_idx - 1.55`) to improve interpretation and reduce collinearity.
 
-### 3.4 Likert Response Generation
+### 4.4 Likert Response Generation
 
 Likert items are generated using the ordered probit model:
 
@@ -284,7 +451,7 @@ def generate_likert_responses(lv_values, loadings, thresholds, rng):
 
 **Standard thresholds**: `[-1.0, -0.35, 0.35, 1.0]` for 5-point Likert scale
 
-### 3.5 Choice Generation
+### 4.5 Choice Generation
 
 Choices are simulated using the Random Utility Model:
 
@@ -308,9 +475,9 @@ def simulate_choice(V_alternatives, rng):
 
 ---
 
-## 4. Measurement Model
+## 5. Measurement Model
 
-### 4.1 Ordered Probit Specification
+### 5.1 Ordered Probit Specification
 
 Likert items are modeled as ordinal manifestations of underlying latent variables:
 
@@ -326,7 +493,7 @@ Where:
 - `τ_j` = threshold parameters (cutpoints)
 - `y_k` = observed ordinal response (1, 2, 3, 4, 5)
 
-### 4.2 Choice Probability for Ordinal Response
+### 5.2 Choice Probability for Ordinal Response
 
 ```
 P(y_k = j | η) = Φ(τ_j - λ_k × η) - Φ(τ_{j-1} - λ_k × η)
@@ -334,7 +501,7 @@ P(y_k = j | η) = Φ(τ_j - λ_k × η) - Φ(τ_{j-1} - λ_k × η)
 
 Where `Φ()` is the standard normal CDF.
 
-### 4.3 Delta Parameterization for Threshold Ordering
+### 5.3 Delta Parameterization for Threshold Ordering
 
 **Problem**: Thresholds must be strictly ordered: τ_1 < τ_2 < τ_3 < τ_4
 
@@ -355,7 +522,7 @@ tau_4 = tau_3 + exp(delta_4)  # tau_4 > tau_3 always
 
 **Why this works**: `exp(x) > 0` for all x, so each threshold is strictly greater than the previous.
 
-### 4.4 Scale Identification
+### 5.4 Scale Identification
 
 The measurement model requires scale normalization:
 
@@ -373,7 +540,7 @@ All loadings estimated freely
 
 This framework uses Option 1 for interpretability.
 
-### 4.5 Reliability Assessment
+### 5.5 Reliability Assessment
 
 **Cronbach's Alpha**:
 ```
@@ -388,9 +555,9 @@ This framework uses Option 1 for interpretability.
 
 ---
 
-## 5. Two-Stage vs Simultaneous Estimation
+## 6. Two-Stage vs Simultaneous Estimation
 
-### 5.1 Two-Stage HCM (Causes Attenuation Bias)
+### 6.1 Two-Stage HCM (Causes Attenuation Bias)
 
 **Stage 1**: Estimate latent variable scores from Likert items
 ```python
@@ -405,7 +572,7 @@ V = ASC + B_FEE × fee + B_LV × lv_score + ...
 
 **Problem**: This treats `lv_score` as error-free, ignoring measurement error.
 
-### 5.2 Attenuation Bias Formula
+### 6.2 Attenuation Bias Formula
 
 When using estimated LV scores instead of true values:
 
@@ -427,7 +594,7 @@ Where:
 reliability = Var(LV_true) / Var(LV_est) = Var(LV_true) / (Var(LV_true) + Var(error)) < 1
 ```
 
-### 5.3 Bias Magnitude
+### 6.3 Bias Magnitude
 
 | Factor | Effect on Bias |
 |--------|---------------|
@@ -440,7 +607,7 @@ reliability = Var(LV_true) / Var(LV_est) = Var(LV_true) / (Var(LV_true) + Var(er
 
 **Expected attenuation**: LV coefficients underestimated by **15-30%**
 
-### 5.4 ICLV: Simultaneous Estimation (Unbiased)
+### 6.4 ICLV: Simultaneous Estimation (Unbiased)
 
 ICLV integrates over the latent variable distribution in the likelihood:
 
@@ -458,7 +625,7 @@ Where:
 - `η_r` = draw r from the latent variable distribution
 - Halton sequences provide more efficient coverage than pseudo-random draws
 
-### 5.5 Comparison Table
+### 6.5 Comparison Table
 
 | Aspect | Two-Stage HCM | ICLV |
 |--------|---------------|------|
@@ -468,7 +635,7 @@ Where:
 | **Implementation** | Simple | Complex |
 | **When to Use** | Exploratory analysis | Final publication |
 
-### 5.6 Empirical Validation
+### 6.6 Empirical Validation
 
 From the framework's simulation studies:
 
@@ -479,9 +646,9 @@ From the framework's simulation studies:
 
 ---
 
-## 6. Policy Analysis Methodology
+## 7. Policy Analysis Methodology
 
-### 6.1 Willingness-to-Pay (WTP)
+### 7.1 Willingness-to-Pay (WTP)
 
 **Definition**: The monetary amount an individual is willing to pay to obtain one unit improvement in an attribute.
 
@@ -500,7 +667,7 @@ Interpretation: Respondents require 100,000 TL compensation to accept
 one additional month of processing time.
 ```
 
-### 6.2 WTP Standard Error (Delta Method)
+### 7.2 WTP Standard Error (Delta Method)
 
 For WTP = -β_num / β_den × scale, the variance is:
 
@@ -535,7 +702,7 @@ def calculate_wtp_with_se(beta_num, beta_den, cov_matrix, scale=10000):
     return wtp, se_wtp
 ```
 
-### 6.3 WTP Distribution for MXL
+### 7.3 WTP Distribution for MXL
 
 When coefficients are random:
 ```
@@ -549,7 +716,7 @@ WTP_i = -β_dur,i / β_fee,i × fee_scale
 
 **Note**: If β_fee can be positive for some individuals, WTP has undefined moments. Use lognormal distribution for fee coefficient to ensure negative sign.
 
-### 6.4 Own-Price Elasticity
+### 7.4 Own-Price Elasticity
 
 **Definition**: Percentage change in choice probability for alternative j given 1% change in own attribute.
 
@@ -563,7 +730,7 @@ WTP_i = -β_dur,i / β_fee,i × fee_scale
 ε_own = B_FEE × fee × (1 - P_paid)
 ```
 
-### 6.5 Cross-Price Elasticity
+### 7.5 Cross-Price Elasticity
 
 **Definition**: Percentage change in choice probability for alternative j given 1% change in attribute of alternative k.
 
@@ -572,7 +739,7 @@ WTP_i = -β_dur,i / β_fee,i × fee_scale
 η_jk = -β × x_k × P_k  (for j ≠ k)
 ```
 
-### 6.6 Arc Elasticity (Discrete Change)
+### 7.6 Arc Elasticity (Discrete Change)
 
 For larger changes (±10%, ±20%):
 
@@ -582,7 +749,7 @@ For larger changes (±10%, ±20%):
 
 **Bootstrap standard errors**: 1000 replicates for confidence intervals
 
-### 6.7 Compensating Variation (Consumer Surplus)
+### 7.7 Compensating Variation (Consumer Surplus)
 
 **Definition**: Monetary equivalent of utility change from policy.
 
@@ -598,7 +765,7 @@ log-sum = ln(Σ_j exp(V_j))
 
 **Interpretation**: Positive CV means policy improves welfare; negative means harm.
 
-### 6.8 Scenario Analysis
+### 7.8 Scenario Analysis
 
 **Default scenarios**:
 - Fee changes: ±10%, ±20%
@@ -612,9 +779,9 @@ log-sum = ln(Σ_j exp(V_j))
 
 ---
 
-## 7. Configuration System
+## 8. Configuration System
 
-### 7.1 config.json Structure
+### 8.1 config.json Structure
 
 ```json
 {
@@ -682,7 +849,7 @@ log-sum = ln(Σ_j exp(V_j))
 }
 ```
 
-### 7.2 Critical Parameters
+### 8.2 Critical Parameters
 
 | Parameter | Purpose | Typical Value |
 |-----------|---------|---------------|
@@ -692,7 +859,7 @@ log-sum = ln(Σ_j exp(V_j))
 | `N` | Sample size | 500-2000 |
 | `T` | Choice tasks per individual | 8-12 |
 
-### 7.3 Sign Enforcement
+### 8.3 Sign Enforcement
 
 Coefficients can be constrained to economically sensible signs:
 
@@ -706,9 +873,9 @@ Coefficients can be constrained to economically sensible signs:
 
 ---
 
-## 8. Isolated Model Validation Workflow
+## 9. Isolated Model Validation Workflow
 
-### 8.1 Purpose
+### 9.1 Purpose
 
 Each model folder (`models/mnl_basic`, `models/mxl_basic`, etc.) contains a self-contained validation system where:
 
@@ -719,7 +886,7 @@ Each model folder (`models/mnl_basic`, `models/mxl_basic`, etc.) contains a self
 
 This ensures **unbiased parameter recovery** when the model is correctly specified.
 
-### 8.2 Folder Structure
+### 9.2 Folder Structure
 
 ```
 models/mnl_basic/
@@ -740,7 +907,7 @@ models/mnl_basic/
     └── wtp.csv
 ```
 
-### 8.3 Running a Model
+### 9.3 Running a Model
 
 ```bash
 cd models/mnl_basic
@@ -754,7 +921,7 @@ python run.py
 4. Computes bias, RMSE, coverage
 5. Saves results and LaTeX tables
 
-### 8.4 Validation Output
+### 9.4 Validation Output
 
 Example `parameter_comparison.csv`:
 
@@ -767,9 +934,9 @@ B_DUR,-0.080,-0.081,0.012,-6.55,-0.001,-0.6%,-0.104,-0.057,Yes
 
 ---
 
-## 9. Extended Model Specifications
+## 10. Extended Model Specifications
 
-### 9.1 MNL Extended (8 Models)
+### 10.1 MNL Extended (8 Models)
 
 | Model | Specification | Key Feature |
 |-------|--------------|-------------|
@@ -782,7 +949,7 @@ B_DUR,-0.080,-0.081,0.012,-6.55,-0.001,-0.6%,-0.104,-0.057,Yes
 | M7 | Log + demographics | Combined |
 | M8 | Heterogeneous ASC | ASC varies by demographics |
 
-### 9.2 MXL Extended (8 Models)
+### 10.2 MXL Extended (8 Models)
 
 | Model | Distribution | Feature |
 |-------|-------------|---------|
@@ -795,7 +962,7 @@ B_DUR,-0.080,-0.081,0.012,-6.55,-0.001,-0.6%,-0.104,-0.057,Yes
 | M7 | Random log(fee) | Transformed scale |
 | M8 | μ + γ×demographics | Heterogeneity in mean |
 
-### 9.3 HCM Extended (8 Models)
+### 10.3 HCM Extended (8 Models)
 
 | Model | LV Configuration | Feature |
 |-------|-----------------|---------|
@@ -808,7 +975,7 @@ B_DUR,-0.080,-0.081,0.012,-6.55,-0.001,-0.6%,-0.104,-0.057,Yes
 | M7 | Domain separation | Patriotism→Fee, Secularism→Duration |
 | M8 | Full specification | All LVs, all attributes |
 
-### 9.4 Model Selection Criteria
+### 10.4 Model Selection Criteria
 
 **Within family** (nested models):
 ```
@@ -824,9 +991,9 @@ p-value from χ² distribution
 
 ---
 
-## 10. Validation Metrics
+## 11. Validation Metrics
 
-### 10.1 Parameter Recovery Metrics
+### 11.1 Parameter Recovery Metrics
 
 | Metric | Formula | Target |
 |--------|---------|--------|
@@ -835,14 +1002,14 @@ p-value from χ² distribution
 | RMSE | √(Σ(bias²)/n) | Low |
 | 95% CI Coverage | % true values in CI | ~95% |
 
-### 10.2 Target Benchmarks
+### 11.2 Target Benchmarks
 
 For well-specified models:
 - **Bias** < 10% for all parameters
 - **Coverage** ≈ 95% (90-97% acceptable)
 - **All parameters significant** (|t| > 1.96)
 
-### 10.3 Model Fit Statistics
+### 11.3 Model Fit Statistics
 
 | Statistic | Formula | Interpretation |
 |-----------|---------|----------------|
@@ -858,9 +1025,9 @@ For well-specified models:
 
 ---
 
-## 11. LaTeX Output Format
+## 12. LaTeX Output Format
 
-### 11.1 Generated Tables
+### 12.1 Generated Tables
 
 | File | Contents |
 |------|----------|
@@ -869,7 +1036,7 @@ For well-specified models:
 | `policy_summary.tex` | WTP, market shares |
 | `elasticity_table.tex` | Own and cross elasticities |
 
-### 11.2 Significance Stars
+### 12.2 Significance Stars
 
 ```
 *** p < 0.001 (|t| > 3.291)
@@ -877,7 +1044,7 @@ For well-specified models:
 *   p < 0.05  (|t| > 1.960)
 ```
 
-### 11.3 Example Parameter Table
+### 12.3 Example Parameter Table
 
 ```latex
 \begin{table}[htbp]
@@ -897,7 +1064,7 @@ B\_DUR & -0.080 & -0.081*** & 0.012 & -6.55 & -0.6\% & Yes \\
 
 ---
 
-## 12. References
+## 13. References
 
 ### Core Discrete Choice Methodology
 
