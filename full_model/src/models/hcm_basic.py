@@ -9,10 +9,12 @@ using Biogeme's Monte Carlo integration, eliminating attenuation bias from
 two-stage approaches.
 
 Model Specification:
-    Structural: η = σ * ω,  where ω ~ N(0,1)
+    Structural (links demographics to latent variable):
+        η = γ_age * (age - center) + σ * ω,  where ω ~ N(0,1)
 
-    Measurement (Ordered Logit):
-        P(I_k = j | η) = Logit(τ_j - λ_k*η) - Logit(τ_{j-1} - λ_k*η)
+    Measurement (Ordered Probit - preferred over logit per Biogeme docs):
+        P(I_k = j | η) = Φ(τ_j - λ_k*η) - Φ(τ_{j-1} - λ_k*η)
+        where Φ is the standard normal CDF
 
     Choice:
         B_FEE_i = B_FEE + B_FEE_LV * η
@@ -20,12 +22,18 @@ Model Specification:
         V2 = ASC_paid + B_FEE_i * fee2 + B_DUR * dur2
         V3 = B_FEE_i * fee3 + B_DUR * dur3
 
-    Likelihood:
+    Likelihood (integrated via Monte Carlo):
         L_n = ∫ P(choice|η) × Π_k P(I_k|η) dη
+
+Identification:
+    - First factor loading fixed to 1.0 for scale identification
+    - sigma_LV estimated (or can be fixed to 1)
+    - Thresholds freely estimated with proper ordering
 
 References:
     - Bierlaire (2018): Technical Report on Latent Variables in Biogeme
     - Walker & Ben-Akiva (2002): Generalized Random Utility Model
+    - Ben-Akiva et al. (2002): Hybrid Choice Models: Progress and Challenges
 
 Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
@@ -44,21 +52,32 @@ import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import (
-    Beta, Variable, MonteCarlo, log, exp, Elem, Draws
+    Beta, Variable, MonteCarlo, log, exp, Elem, Draws, bioNormalCdf
 )
 
 from src.utils.item_detection import get_lv_items, get_items_by_prefix
 
 
 # =============================================================================
-# MEASUREMENT MODEL (Ordered Logit for Likert Items)
+# MODEL CONSTANTS
 # =============================================================================
 
-def ordered_logit_prob(indicator, loading, lv, thresholds):
-    """
-    Compute ordered logit probability for a single indicator.
+# Availability dict for alternatives (used in logit and null LL calculation)
+AV_DICT = {1: 1, 2: 1, 3: 1}  # All alternatives always available
 
-    P(I = j | η) = Logistic(τ_j - λ*η) - Logistic(τ_{j-1} - λ*η)
+
+# =============================================================================
+# MEASUREMENT MODEL (Ordered Probit for Likert Items)
+# =============================================================================
+
+def ordered_probit_prob(indicator, loading, lv, thresholds):
+    """
+    Compute ordered probit probability for a single indicator.
+
+    P(I = j | η) = Φ(τ_j - λ*η) - Φ(τ_{j-1} - λ*η)
+
+    Uses the normal CDF (probit) which is more common in the literature
+    and matches the DGP specification.
 
     Args:
         indicator: Biogeme Variable for the indicator (1-5)
@@ -69,28 +88,17 @@ def ordered_logit_prob(indicator, loading, lv, thresholds):
     Returns:
         Biogeme expression for probability
     """
-    # Logistic CDF: 1 / (1 + exp(-x))
-    def logistic_cdf(x):
-        return 1 / (1 + exp(-x))
+    z = loading * lv
 
-    # Cumulative probabilities at each threshold
-    cum_probs = {}
-    cum_probs[1] = logistic_cdf(thresholds[0] - loading * lv)
-    cum_probs[2] = logistic_cdf(thresholds[1] - loading * lv)
-    cum_probs[3] = logistic_cdf(thresholds[2] - loading * lv)
-    cum_probs[4] = logistic_cdf(thresholds[3] - loading * lv)
-    cum_probs[5] = 1.0
-
-    # Category probabilities: P(I = j) = P(I <= j) - P(I <= j-1)
-    category_probs = {}
-    category_probs[1] = cum_probs[1]
-    category_probs[2] = cum_probs[2] - cum_probs[1]
-    category_probs[3] = cum_probs[3] - cum_probs[2]
-    category_probs[4] = cum_probs[4] - cum_probs[3]
-    category_probs[5] = cum_probs[5] - cum_probs[4]
+    # Cumulative probabilities using normal CDF (probit)
+    prob_1 = bioNormalCdf(thresholds[0] - z)
+    prob_2 = bioNormalCdf(thresholds[1] - z) - bioNormalCdf(thresholds[0] - z)
+    prob_3 = bioNormalCdf(thresholds[2] - z) - bioNormalCdf(thresholds[1] - z)
+    prob_4 = bioNormalCdf(thresholds[3] - z) - bioNormalCdf(thresholds[2] - z)
+    prob_5 = 1 - bioNormalCdf(thresholds[3] - z)
 
     # Select probability based on observed indicator value
-    prob = Elem(category_probs, indicator)
+    prob = Elem({1: prob_1, 2: prob_2, 3: prob_3, 4: prob_4, 5: prob_5}, indicator)
 
     return prob
 
@@ -116,7 +124,7 @@ def create_measurement_likelihood(lv, items, thresholds, loadings):
         indicator = Variable(item)
         loading = loadings[item]
 
-        prob = ordered_logit_prob(indicator, loading, lv, thresholds)
+        prob = ordered_probit_prob(indicator, loading, lv, thresholds)
         joint_prob = joint_prob * prob
 
     return joint_prob
@@ -149,16 +157,30 @@ def create_hcm_basic_iclv(database: db.Database, items: list):
     dur3 = Variable('dur3')
 
     # -------------------------------------------------------------------------
-    # LATENT VARIABLE: Structural Equation
-    # η = σ * ω,  where ω ~ N(0,1)
+    # DEMOGRAPHICS (Centered for numerical stability)
     # -------------------------------------------------------------------------
+    age_idx = Variable('age_idx')
+    # Center age around mean (typically 2 for age_idx scale 1-4)
+    age_centered = age_idx - 2.0
+
+    # -------------------------------------------------------------------------
+    # LATENT VARIABLE: Structural Equation
+    # η = γ_age * (age - center) + σ * ω,  where ω ~ N(0,1)
+    # This links observable demographics to the latent construct
+    # -------------------------------------------------------------------------
+    # Structural parameters
+    gamma_age = Beta('gamma_age', 0.2, -2, 2, 0)  # Effect of age on LV
+    sigma_LV = Beta('sigma_LV', 1.0, 0.1, 5, 0)   # LV standard deviation
+
+    # Random draw from standard normal (using Halton sequences for efficiency)
     omega = Draws('omega', 'NORMAL_HALTON2')
 
-    # Standard deviation fixed to 1 for identification
-    LV_pat_blind = omega
+    # STRUCTURAL EQUATION: η = γ_age * age_centered + σ * ω
+    LV_pat_blind = gamma_age * age_centered + sigma_LV * omega
 
     # -------------------------------------------------------------------------
-    # MEASUREMENT MODEL: Ordered Logit for Likert Items
+    # MEASUREMENT MODEL: Ordered Probit for Likert Items
+    # P(I = j | η) = Φ(τ_j - λ*η) - Φ(τ_{j-1} - λ*η)
     # -------------------------------------------------------------------------
     # Shared thresholds
     tau_1 = Beta('tau_1', -1.5, -5, 5, 0)
@@ -198,10 +220,9 @@ def create_hcm_basic_iclv(database: db.Database, items: list):
     V3 = B_FEE_i * fee3 + B_DUR * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Choice probability (conditional on LV)
-    choice_prob = models.logit(V, av, CHOICE)
+    choice_prob = models.logit(V, AV_DICT, CHOICE)
 
     # -------------------------------------------------------------------------
     # JOINT LIKELIHOOD WITH MONTE CARLO INTEGRATION
@@ -290,13 +311,21 @@ def estimate_hcm_basic(data_path: str,
     # Load and prepare data
     df, items = prepare_data(data_path)
     n_obs = len(df)
-    n_individuals = df['ID'].nunique() if 'ID' in df.columns else n_obs
+
+    # Validate panel structure exists (required for HCM/ICLV with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "HCM/ICLV requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_individuals = df['ID'].nunique()
 
     print(f"\nData: {n_obs} observations from {n_individuals} individuals")
     print(f"Indicators: {len(items)} items")
 
-    # Create database
+    # Create database with panel structure for cluster-robust inference
     database = db.Database('hcm_basic_iclv', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws
     database.number_of_draws = n_draws
 
     # Create model
@@ -307,7 +336,7 @@ def estimate_hcm_basic(data_path: str,
     print("\nEstimating model (this may take a few minutes)...")
     biogeme = bio.BIOGEME(database, logprob)
     biogeme.model_name = model_name
-    biogeme.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme.calculate_null_loglikelihood(AV_DICT)
 
     results = biogeme.estimate()
 

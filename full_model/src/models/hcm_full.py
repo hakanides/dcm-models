@@ -60,6 +60,14 @@ from src.utils.item_detection import get_lv_items, get_items_by_prefix
 
 
 # =============================================================================
+# MODEL CONSTANTS
+# =============================================================================
+
+# Availability dict for alternatives (used in logit and null LL calculation)
+AV_DICT = {1: 1, 2: 1, 3: 1}  # All alternatives always available
+
+
+# =============================================================================
 # MEASUREMENT MODEL (Ordered Logit for Likert Items)
 # =============================================================================
 
@@ -250,10 +258,9 @@ def create_hcm_full_iclv(database: db.Database, construct_items: dict):
     V3 = B_FEE_i * fee3 + B_DUR_i * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Choice probability (conditional on LVs)
-    choice_prob = models.logit(V, av, CHOICE)
+    choice_prob = models.logit(V, AV_DICT, CHOICE)
 
     # -------------------------------------------------------------------------
     # JOINT LIKELIHOOD WITH MONTE CARLO INTEGRATION
@@ -356,12 +363,20 @@ def estimate_hcm_full(data_path: str,
     # Load and prepare data
     df, construct_items = prepare_data(data_path)
     n_obs = len(df)
-    n_individuals = df['ID'].nunique() if 'ID' in df.columns else n_obs
+
+    # Validate panel structure exists (required for HCM/ICLV with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "HCM/ICLV requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_individuals = df['ID'].nunique()
 
     print(f"\nData: {n_obs} observations from {n_individuals} individuals")
 
-    # Create database
+    # Create database with panel structure for cluster-robust inference
     database = db.Database('hcm_full_iclv', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws
     database.number_of_draws = n_draws
 
     # Create model
@@ -372,7 +387,7 @@ def estimate_hcm_full(data_path: str,
     print("\nEstimating model (this may take several minutes)...")
     biogeme = bio.BIOGEME(database, logprob)
     biogeme.model_name = model_name
-    biogeme.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme.calculate_null_loglikelihood(AV_DICT)
 
     results = biogeme.estimate()
 

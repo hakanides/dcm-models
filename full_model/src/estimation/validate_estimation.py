@@ -14,7 +14,7 @@ This is crucial for:
 - Testing estimation code before real data
 - Understanding identification and precision
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -92,7 +92,7 @@ def define_mnl_model(database: db.Database):
 
     # Parameters to estimate
     ASC_paid = Beta('ASC_paid', 0, None, None, 0)  # ASC for paid alternatives
-    ASC_std = Beta('ASC_std', 0, None, None, 1)    # Fixed to 0 (base)
+    ASC_std = 0  # Fixed to 0 (base alternative normalization)
 
     B_FEE = Beta('B_FEE', -1, None, 0, 0)          # Fee coefficient (constrained negative)
     B_DUR = Beta('B_DUR', -0.1, None, 0, 0)        # Duration coefficient (constrained negative)

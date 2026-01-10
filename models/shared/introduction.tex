@@ -1,0 +1,110 @@
+%% introduction.tex - Introduction Section for DCM Working Paper
+%% Provides context, research objectives, contributions, and paper organization
+%% For inclusion in main document via \input{introduction.tex}
+%%
+%% Required packages in main document:
+%%   \usepackage{amsmath}
+%%   \usepackage{amssymb}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Understanding how individuals make choices among discrete alternatives is fundamental to economic analysis and policy design. When public agencies offer expedited processing services---allowing citizens to pay a premium for faster completion of administrative procedures---the resulting choices reveal valuable information about preferences, time valuation, and willingness to pay. These revealed preferences can inform service pricing, resource allocation, and equity considerations in public service delivery. However, extracting meaningful insights from choice data requires econometric methods that properly account for the heterogeneity in preferences across individuals.
+
+This paper develops and validates a comprehensive discrete choice modeling framework designed to systematically address three distinct sources of preference heterogeneity: observable demographic characteristics, unobserved individual-specific factors, and latent psychological constructs. We implement a progression of six model specifications---from basic multinomial logit through integrated choice and latent variable models---each building upon its predecessor to capture increasingly sophisticated forms of taste variation. A central methodological contribution is the demonstration and resolution of attenuation bias in hybrid choice models that incorporate latent psychological variables.
+
+%% ============================================================================
+%% Research Context and Motivation
+%% ============================================================================
+
+\subsection{Research Context}
+\label{sec:context}
+
+The discrete choice analysis tradition, pioneered by \citet{mcfadden1974conditional} and extended by \citet{train2009discrete}, provides powerful tools for understanding decision-making among mutually exclusive alternatives. The standard multinomial logit (MNL) model assumes that all individuals share identical preference parameters---an assumption that is analytically convenient but often empirically untenable. Real populations exhibit substantial variation in tastes: some individuals are highly price-sensitive while others prioritize time savings; some respond strongly to service quality attributes while others focus primarily on cost.
+
+Three broad categories of heterogeneity merit consideration. First, \textit{observable heterogeneity} arises when preferences vary systematically with measured individual characteristics such as age, income, and education. Older individuals may have accumulated wealth that reduces price sensitivity; higher-income individuals may have greater opportunity costs of time that increase their valuation of expedited service. These patterns can be captured through demographic interaction terms in the utility specification.
+
+Second, \textit{unobserved heterogeneity} reflects taste variation that cannot be explained by observable characteristics. Even after controlling for demographics, individuals differ in their underlying preferences due to unmeasured factors such as personality, past experiences, or idiosyncratic circumstances. Mixed logit (MXL) models address this heterogeneity by specifying taste parameters as random variables drawn from continuous distributions across the population \citep{mcfadden2000mixed}.
+
+Third, and most challenging, \textit{latent psychological heterogeneity} captures the influence of unobserved attitudes, values, and beliefs on choice behavior. Psychological constructs such as patriotism, trust in institutions, or religious orientation may systematically shape how individuals evaluate public service options. These constructs are not directly observable but can be measured imperfectly through survey instruments such as Likert-scale items. Hybrid choice models (HCM) integrate such latent variables into the choice framework \citep{ben2002integration, walker2001extended}.
+
+%% ============================================================================
+%% Research Problem
+%% ============================================================================
+
+\subsection{The Attenuation Bias Problem}
+\label{sec:problem}
+
+A critical methodological challenge in hybrid choice modeling is \textit{attenuation bias}---the systematic underestimation of latent variable effects when using conventional two-stage estimation procedures. In the standard approach, researchers first estimate latent variable scores from indicator responses (e.g., using factor analysis or structural equation modeling), then include these estimated scores as regressors in the choice model. This two-stage procedure ignores the measurement error inherent in the first-stage latent variable estimates.
+
+Classical errors-in-variables theory establishes that using a noisy proxy for a true regressor attenuates the estimated coefficient toward zero. If $\hat{\eta}$ is an estimated latent variable with measurement error $e$ such that $\hat{\eta} = \eta + e$, then the coefficient estimated by regressing on $\hat{\eta}$ is biased:
+\begin{equation}
+\text{plim}(\hat{\lambda}) = \lambda \cdot \frac{\text{Var}(\eta)}{\text{Var}(\eta) + \text{Var}(e)} = \lambda \cdot \rho
+\label{eq:attenuation_intro}
+\end{equation}
+where $\rho < 1$ is the reliability ratio. The magnitude of attenuation depends on the quality of the measurement instruments: fewer indicators, lower factor loadings, or greater response noise all reduce reliability and increase bias.
+
+This problem is particularly consequential in applied settings. If the effect of patriotism on willingness to pay for government services is attenuated by 30\%, policy conclusions based on the estimated effect will systematically understate the true importance of psychological factors. The Integrated Choice and Latent Variable (ICLV) model addresses this bias by estimating all model components simultaneously, properly accounting for measurement uncertainty through joint likelihood maximization \citep{raveau2010comparison}.
+
+%% ============================================================================
+%% Research Objectives
+%% ============================================================================
+
+\subsection{Research Objectives}
+\label{sec:objectives}
+
+This paper pursues three interconnected objectives:
+
+\textbf{First}, we develop a systematic model progression framework that advances from simple to complex specifications in a principled manner. The six-model hierarchy---MNL Basic, MNL with Demographics, Mixed Logit, HCM Basic, HCM Full, and ICLV---provides a structured approach to understanding preference heterogeneity. Each model addresses specific limitations of its predecessor:
+\begin{itemize}
+\item MNL Basic $\rightarrow$ MNL Demographics: Relaxes homogeneity assumption via demographic interactions
+\item MNL Demographics $\rightarrow$ MXL: Captures unexplained heterogeneity via random coefficients
+\item MXL $\rightarrow$ HCM Basic: Provides theoretical explanation through latent psychological constructs
+\item HCM Basic $\rightarrow$ HCM Full: Enriches psychological framework with multiple constructs
+\item HCM Full $\rightarrow$ ICLV: Eliminates attenuation bias through simultaneous estimation
+\end{itemize}
+
+\textbf{Second}, we demonstrate the magnitude and consequences of attenuation bias through rigorous parameter recovery simulations. Using a matched data generating process (DGP) approach, we simulate choice data with known true parameters, estimate models using both two-stage and simultaneous procedures, and compare the recovered estimates to ground truth. This validation approach provides empirical evidence on the practical importance of the attenuation problem.
+
+\textbf{Third}, we apply the validated framework to analyze choices among public service alternatives, quantifying the roles of demographics, unobserved heterogeneity, and psychological constructs in shaping preferences for expedited processing. The empirical application yields substantive insights into willingness to pay, price elasticity, and the psychological determinants of service valuation.
+
+%% ============================================================================
+%% Contributions
+%% ============================================================================
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+This paper makes three primary contributions to the discrete choice modeling literature:
+
+\textbf{Methodological contribution.} We develop and validate a matching DGP approach to model assessment that ensures the data generating process exactly matches the estimation model's assumptions. This approach provides rigorous parameter recovery benchmarks---including bias, coverage, and precision metrics---that build confidence in estimation procedures before application to real data. The validation framework is applicable beyond our specific context to any discrete choice modeling application.
+
+\textbf{Substantive contribution.} We provide systematic evidence on the three sources of preference heterogeneity in service choice contexts. Our estimates reveal that:
+\begin{itemize}
+\item Observable demographics explain substantial variation in fee and duration sensitivity, with income showing the strongest effects
+\item Unobserved heterogeneity is economically significant, with the standard deviation of fee sensitivity approximately 40\% of the mean
+\item Latent psychological constructs---particularly patriotism and secularism---systematically influence choice behavior, with effects that are substantially underestimated (by 15--35\%) when using two-stage estimation
+\end{itemize}
+
+\textbf{Practical contribution.} The framework yields actionable insights for service pricing and design. Willingness-to-pay estimates provide benchmarks for fee setting; demographic interaction effects suggest opportunities for targeted service offerings; and price elasticities inform revenue projections under alternative pricing scenarios. The finding that psychological factors significantly influence choice behavior highlights the importance of understanding citizen attitudes in public service contexts.
+
+%% ============================================================================
+%% Paper Organization
+%% ============================================================================
+
+\subsection{Paper Organization}
+\label{sec:organization}
+
+The remainder of this paper is organized as follows.
+
+Section~\ref{sec:methodology} presents the methodological framework, including the theoretical foundations of random utility maximization, the research architecture with its two-tier validation approach, the complete model taxonomy, the treatment of different heterogeneity sources, estimation methodology, and the attenuation bias problem with the ICLV solution.
+
+Section~\ref{sec:dcm_framework} details the six discrete choice model specifications implemented in our analysis. For each model, we present the utility specification, estimation approach, parameters, and the specific limitation it addresses relative to simpler alternatives. The section concludes with a comprehensive comparison table and guidance on model selection.
+
+Section~\ref{sec:results} reports empirical results from model estimation, including parameter estimates across all specifications, model fit comparisons, willingness-to-pay analysis, price elasticities, predicted market shares, and a discussion of heterogeneity findings with their policy implications.
+
+Section~\ref{sec:conclusion} summarizes our findings, discusses limitations, and suggests directions for future research.
+
+%% ============================================================================
+%% End of Introduction Section
+%% ============================================================================

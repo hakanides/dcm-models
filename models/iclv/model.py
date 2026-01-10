@@ -40,37 +40,78 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.policy_tools import run_policy_analysis
 from shared.latex_tools import generate_all_latex
+from shared import validate_required_columns, validate_coefficient_signs
 
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import (
-    Beta, Variable, bioDraws, MonteCarlo, log, exp, Elem, bioNormalCdf
-)
+# Handle Biogeme API changes (bioDraws deprecated in 3.3+, use Draws)
+try:
+    from biogeme.expressions import Beta, Variable, Draws, MonteCarlo, log, exp, Elem, bioNormalCdf
+except ImportError:
+    from biogeme.expressions import Beta, Variable, bioDraws as Draws, MonteCarlo, log, exp, Elem, bioNormalCdf
+
+
+# Alternative availability (1=available, 0=not available)
+# This should match the alternatives defined in config.json
+ALTERNATIVES = {1: 'paid1', 2: 'paid2', 3: 'standard'}
+AV_DICT = {k: 1 for k in ALTERNATIVES.keys()}  # All alternatives available
 
 
 def prepare_data(filepath: Path, config: dict) -> pd.DataFrame:
     """Load and prepare data for ICLV estimation."""
     df = pd.read_csv(filepath)
 
+    # Base required columns
+    required_cols = ['CHOICE', 'fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3',
+                     'age_idx', 'edu_idx']
+
+    # Add indicator items from config
+    for lv_name in ['pat_blind', 'sec_dl']:
+        latent_cfg = config.get('latent', {}).get(lv_name, {})
+        items = latent_cfg.get('measurement', {}).get('items', [])
+        required_cols.extend(items)
+
+    # Validate required columns exist
+    validate_required_columns(df, required_cols, 'ICLV')
+
     # Ensure fee columns are scaled
     if 'fee1_10k' not in df.columns:
         for alt in [1, 2, 3]:
             df[f'fee{alt}_10k'] = df[f'fee{alt}'] / 10000.0
 
-    # Center demographics as specified in config
+    # Center (and optionally scale) demographics as specified in config
+    # Standard approach: centering improves interpretability of main effects
+    # Optional scaling (scale != 1.0) standardizes effect sizes across variables
     demographics_cfg = config.get('demographics', {})
     for demo_name, demo_spec in demographics_cfg.items():
         if demo_name in df.columns:
             center = demo_spec.get('center', 0)
-            df[f'{demo_name}_centered'] = df[demo_name] - center
+            scale = demo_spec.get('scale', 1.0)  # Default: no scaling (centering only)
+            if scale != 1.0:
+                df[f'{demo_name}_centered'] = (df[demo_name] - center) / scale
+            else:
+                df[f'{demo_name}_centered'] = df[demo_name] - center
 
-    # Ensure CHOICE is included and numeric
+    # Build required columns dynamically from config
+    # Core columns always needed
     required_cols = ['ID', 'CHOICE', 'fee1_10k', 'fee2_10k', 'fee3_10k',
-                     'dur1', 'dur2', 'dur3',
-                     'pat_blind_1', 'pat_blind_2', 'pat_blind_3',
-                     'sec_dl_1', 'sec_dl_2', 'sec_dl_3',
-                     'age_idx_centered', 'edu_idx_centered']
+                     'dur1', 'dur2', 'dur3']
+
+    # Add centered demographics from config
+    demographics_cfg = config.get('demographics', {})
+    for demo_name in demographics_cfg.keys():
+        centered_col = f'{demo_name}_centered'
+        if centered_col in df.columns:
+            required_cols.append(centered_col)
+
+    # Add indicator items from config (dynamically)
+    for lv_name in config.get('latent', {}).keys():
+        latent_cfg = config['latent'][lv_name]
+        items = latent_cfg.get('measurement', {}).get('items', [])
+        for item in items:
+            if item in df.columns:
+                required_cols.append(item)
 
     # Keep required columns plus any other numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -121,10 +162,12 @@ def create_iclv_model(database: db.Database, config: dict):
     sigma_sdl = Beta('sigma_sdl', 1.0, 0.1, 5, 0)
 
     # Measurement model parameters - loadings (first item fixed to 1)
-    lambda_pb_1 = Beta('lambda_pb_1', 1.0, None, None, 1)  # Fixed to 1
+    # Scale identification: first loading per construct fixed to 1.0 (direct assignment)
+    # This is equivalent to Beta('name', 1.0, None, None, 1) but cleaner
+    lambda_pb_1 = 1.0  # Fixed to 1 for scale identification
     lambda_pb_2 = Beta('lambda_pb_2', 0.8, 0.1, 2, 0)
     lambda_pb_3 = Beta('lambda_pb_3', 0.8, 0.1, 2, 0)
-    lambda_sdl_1 = Beta('lambda_sdl_1', 1.0, None, None, 1)  # Fixed to 1
+    lambda_sdl_1 = 1.0  # Fixed to 1 for scale identification
     lambda_sdl_2 = Beta('lambda_sdl_2', 0.8, 0.1, 2, 0)
     lambda_sdl_3 = Beta('lambda_sdl_3', 0.8, 0.1, 2, 0)
 
@@ -132,32 +175,39 @@ def create_iclv_model(database: db.Database, config: dict):
     # Using delta parameterization to GUARANTEE ordering: tau_1 < tau_2 < tau_3 < tau_4
     # tau_1 is free, tau_k = tau_{k-1} + exp(delta_k) for k > 1
     # This ensures strict ordering regardless of optimization path
+    #
+    # NOTE ON DGP ALIGNMENT:
+    # The DGP uses FIXED thresholds [-1.0, -0.35, 0.35, 1.0] for simulation.
+    # Here we ESTIMATE thresholds, which is standard practice for real data.
+    # Starting values are initialized close to DGP values for faster convergence.
+    # See simulate_full_data.py for DGP threshold specification.
 
     # Pat_blind thresholds
+    # Starting values aligned with DGP thresholds [-1.0, -0.35, 0.35, 1.0]
     tau_pb_1 = Beta('tau_pb_1', -1.0, -3, 3, 0)  # First threshold free
-    delta_pb_2 = Beta('delta_pb_2', -0.5, -3, 3, 0)  # log(gap) ≈ 0.6
-    delta_pb_3 = Beta('delta_pb_3', -0.3, -3, 3, 0)  # log(gap) ≈ 0.74
-    delta_pb_4 = Beta('delta_pb_4', -0.5, -3, 3, 0)  # log(gap) ≈ 0.6
+    delta_pb_2 = Beta('delta_pb_2', -0.5, -3, 3, 0)  # exp(-0.5)≈0.61, tau_2≈-0.39
+    delta_pb_3 = Beta('delta_pb_3', -0.36, -3, 3, 0) # exp(-0.36)≈0.70, tau_3≈0.31
+    delta_pb_4 = Beta('delta_pb_4', -0.5, -3, 3, 0)  # exp(-0.5)≈0.61, tau_4≈0.92
 
     # Compute ordered thresholds: tau_k = tau_{k-1} + exp(delta_k)
     tau_pb_2 = tau_pb_1 + exp(delta_pb_2)
     tau_pb_3 = tau_pb_2 + exp(delta_pb_3)
     tau_pb_4 = tau_pb_3 + exp(delta_pb_4)
 
-    # Sec_dl thresholds (same structure)
+    # Sec_dl thresholds (same structure, aligned with DGP)
     tau_sdl_1 = Beta('tau_sdl_1', -1.0, -3, 3, 0)
-    delta_sdl_2 = Beta('delta_sdl_2', -0.5, -3, 3, 0)
-    delta_sdl_3 = Beta('delta_sdl_3', -0.3, -3, 3, 0)
-    delta_sdl_4 = Beta('delta_sdl_4', -0.5, -3, 3, 0)
+    delta_sdl_2 = Beta('delta_sdl_2', -0.5, -3, 3, 0)   # exp(-0.5)≈0.61, tau_2≈-0.39
+    delta_sdl_3 = Beta('delta_sdl_3', -0.36, -3, 3, 0)  # exp(-0.36)≈0.70, tau_3≈0.31
+    delta_sdl_4 = Beta('delta_sdl_4', -0.5, -3, 3, 0)   # exp(-0.5)≈0.61, tau_4≈0.92
 
     tau_sdl_2 = tau_sdl_1 + exp(delta_sdl_2)
     tau_sdl_3 = tau_sdl_2 + exp(delta_sdl_3)
     tau_sdl_4 = tau_sdl_3 + exp(delta_sdl_4)
 
     # ===== RANDOM DRAWS =====
-    # Standard normal draws for latent variables
-    omega_pb = bioDraws('omega_pb', 'NORMAL')
-    omega_sdl = bioDraws('omega_sdl', 'NORMAL')
+    # Standard normal draws using Halton sequences for better coverage
+    omega_pb = Draws('omega_pb', 'NORMAL_HALTON2')
+    omega_sdl = Draws('omega_sdl', 'NORMAL_HALTON3')
 
     # ===== STRUCTURAL MODEL =====
     # Latent variable values (integrate over these)
@@ -210,10 +260,9 @@ def create_iclv_model(database: db.Database, config: dict):
     V3 = B_FEE_i * fee3 + B_DUR * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Choice probability
-    prob_choice = models.logit(V, av, CHOICE)
+    prob_choice = models.logit(V, AV_DICT, CHOICE)
 
     # ===== JOINT LIKELIHOOD =====
     # Joint probability of choice and measurements, integrated over LV distribution
@@ -225,7 +274,7 @@ def create_iclv_model(database: db.Database, config: dict):
     return logprob
 
 
-def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
+def estimate(model_dir: Path, n_draws: int = 1000, verbose: bool = True) -> dict:
     """Estimate ICLV model with simultaneous estimation."""
     data_path = model_dir / "data" / "simulated_data.csv"
     config_path = model_dir / "config.json"
@@ -260,6 +309,7 @@ def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
     # Note: Not using panel() to keep variable names simple
     # Each observation treated independently for this demonstration
     database = db.Database('iclv', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws within individuals
 
     # Create model
     logprob = create_iclv_model(database, config)
@@ -278,6 +328,18 @@ def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
     finally:
         os.chdir(original_dir)
 
+    # Check convergence status
+    general_stats = results.get_general_statistics()
+    converged = True
+    for key, val in general_stats.items():
+        if 'Optimization' in key and 'algorithm' not in key.lower():
+            status = str(val[0]) if isinstance(val, tuple) else str(val)
+            if 'success' not in status.lower() and 'converged' not in status.lower():
+                converged = False
+                if verbose:
+                    print(f"\nWARNING: Optimization may not have converged! Status: {status}")
+                break
+
     # Extract results
     estimates_df = results.get_estimated_parameters()
     estimates_df = estimates_df.set_index('Name')
@@ -287,8 +349,11 @@ def estimate(model_dir: Path, n_draws: int = 100, verbose: bool = True) -> dict:
     tstats = estimates_df['Robust t-stat.'].to_dict()
     pvals = estimates_df['Robust p-value'].to_dict()
 
-    # Get fit statistics
-    general_stats = results.get_general_statistics()
+    # Validate coefficient signs
+    if verbose:
+        validate_coefficient_signs(betas, model_name='ICLV')
+
+    # Get fit statistics (reuse general_stats from convergence check)
     final_ll = None
     aic = None
     bic = None

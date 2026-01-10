@@ -18,7 +18,7 @@ Parameters:
 Usage:
     python src/models/mnl_basic.py --data data/simulated/fresh_simulation.csv
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -35,6 +35,15 @@ import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
+
+
+# =============================================================================
+# MODEL CONSTANTS
+# =============================================================================
+
+# Availability dict for alternatives (used in logit and null LL calculation)
+# This ensures consistency and avoids hardcoding throughout the module
+AV_DICT = {1: 1, 2: 1, 3: 1}  # All alternatives always available
 
 
 # =============================================================================
@@ -75,9 +84,8 @@ def create_mnl_basic(database: db.Database):
     V3 = B_FEE * fee3 + B_DUR * dur3  # Reference alternative
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
-    logprob = models.loglogit(V, av, CHOICE)
+    logprob = models.loglogit(V, AV_DICT, CHOICE)
 
     return logprob, 'MNL_Basic'
 
@@ -147,7 +155,7 @@ def estimate_mnl_basic(data_path: str,
     print("\nEstimating model...")
     biogeme_model = bio.BIOGEME(database, logprob)
     biogeme_model.model_name = model_name
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     results = biogeme_model.estimate()
 

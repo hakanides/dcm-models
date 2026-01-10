@@ -50,11 +50,11 @@ python scripts/run_all_models.py  # ~30-60 minutes
 | 1 | MNL Basic | `models/mnl_basic/` | ~30 sec | Baseline discrete choice |
 | 2 | MNL Demographics | `models/mnl_demographics/` | ~1 min | Observable heterogeneity |
 | 3 | MXL Basic | `models/mxl_basic/` | ~2 min | Unobserved heterogeneity |
-| 4 | HCM Basic | `models/hcm_basic/` | ~3 min | Latent variables (two-stage) |
-| 5 | HCM Full | `models/hcm_full/` | ~5 min | Attenuation bias problem |
-| 6 | ICLV | `models/iclv/` | ~10 min | Simultaneous estimation (solution) |
+| 4 | HCM Basic | `models/hcm_basic/` | ~3 min | Single latent variable (ICLV estimation) |
+| 5 | HCM Full | `models/hcm_full/` | ~5 min | 4 latent variables with structural equations |
+| 6 | ICLV | `models/iclv/` | ~10 min | Full ICLV with 2 constructs |
 
-**Key Insight:** ICLV simultaneous estimation reduces latent variable bias from 50-66% (HCM two-stage) to 2.4%.
+**Key Insight:** All HCM models use simultaneous ICLV estimation with structural equations (η = Γ×X + σ×ω), eliminating attenuation bias. The deprecated two-stage approach in `full_model/` is for reference only.
 
 ---
 
@@ -69,6 +69,7 @@ python scripts/run_all_models.py  # ~30-60 minutes
 - [Configuration](#configuration)
 - [For Real Data](#for-real-data)
 - [API Reference](#api-reference)
+- [Architecture Differences](#architecture-differences-models-vs-full_model)
 - [Methodology Notes](#methodology-notes)
 
 ---
@@ -109,11 +110,11 @@ ls output/latex/
 cd ../mxl_basic
 python run.py
 
-# Then HCM to see attenuation bias
+# Then HCM with latent variable integration
 cd ../hcm_basic
 python run.py
 
-# Finally ICLV to see the solution
+# Full ICLV with multiple constructs
 cd ../iclv
 python run.py
 ```
@@ -141,8 +142,8 @@ DCM-Research/
 │   ├── mnl_basic/                       # Basic MNL (~30 sec, <2% bias)
 │   ├── mnl_demographics/                # MNL + demographics (~1 min)
 │   ├── mxl_basic/                       # MXL random coefficients (~2 min)
-│   ├── hcm_basic/                       # HCM single LV (~3 min, shows attenuation)
-│   ├── hcm_full/                        # HCM 4 LVs (~5 min, shows attenuation)
+│   ├── hcm_basic/                       # HCM single LV (~3 min, unbiased ICLV)
+│   ├── hcm_full/                        # HCM 4 LVs (~5 min, unbiased ICLV)
 │   ├── iclv/                            # ICLV simultaneous (~10 min, unbiased)
 │   └── shared/                          # Shared utilities
 │       ├── policy_tools.py              # WTP, elasticity, consumer surplus
@@ -265,9 +266,11 @@ Each model's `config.json` defines the true parameters for simulation:
 | MNL Basic | `models/mnl_basic/` | Unbiased | <2% | Yes |
 | MNL Demographics | `models/mnl_demographics/` | Unbiased | <2% | Yes |
 | MXL Basic | `models/mxl_basic/` | Good | <6% | Yes |
-| HCM Basic | `models/hcm_basic/` | **Attenuated** | ~50-66% | No (LV effect) |
-| HCM Full | `models/hcm_full/` | **Attenuated** | ~40-70% | No (all LV effects) |
-| ICLV | `models/iclv/` | Unbiased | ~2.4% | Yes |
+| HCM Basic | `models/hcm_basic/` | Unbiased | <10% | Yes |
+| HCM Full | `models/hcm_full/` | Unbiased | <10% | Yes |
+| ICLV | `models/iclv/` | Unbiased | <5% | Yes |
+
+**Note:** All HCM models now use simultaneous ICLV estimation with structural equations, eliminating the attenuation bias that affects two-stage approaches.
 
 ### Output Files
 
@@ -517,26 +520,105 @@ When using real survey data:
 
 ---
 
+## Architecture Differences: `models/` vs `full_model/`
+
+The two codebases serve different purposes and have implementation differences. Understanding these is critical for maintenance and bug fixes.
+
+### Key Technical Differences
+
+| Aspect | `models/` (Isolated) | `full_model/` (Research) |
+|--------|---------------------|--------------------------|
+| **Sample Size** | N=500 individuals, T=10 tasks | N=300 individuals (configurable) |
+| **Panel Declaration** | `database.panel('ID')` | Varies by model |
+| **Fixed Parameters** | Direct assignment (`= 1.0`) | Direct assignment (`= 1.0`) |
+| **Threshold Parameterization** | Delta (guaranteed ordering) | Delta (guaranteed ordering) |
+| **Configuration** | Local `config.json` per model | Central `config/model_config.json` |
+| **DGP Location** | `simulate_full_data.py` per model | `src/simulation/dcm_simulator.py` |
+| **Policy Analysis** | Shared via `models/shared/` | `src/policy_analysis/` module |
+
+### When Changes Propagate (and When They Don't)
+
+**Shared code (changes propagate automatically):**
+- `models/shared/` utilities are used by all isolated models
+- `full_model/src/policy_analysis/` is a self-contained module
+
+**Duplicated code (changes require manual sync):**
+- Each `models/*/simulate_full_data.py` has its own DGP implementation
+- Model specifications in `models/*/model.py` are independent
+- Configuration formats differ between tiers
+
+### Standardization Conventions
+
+The following conventions are now standardized across both codebases:
+
+1. **Fixed Parameters**: Use direct float assignment
+   ```python
+   # Correct: Direct assignment
+   lambda_first = 1.0  # Fixed loading for scale identification
+   ASC_base = 0  # Fixed ASC for normalization
+
+   # Avoid: Beta with fixed flag
+   # lambda_first = Beta('lambda_first', 1.0, None, None, 1)
+   ```
+
+2. **Ordered Probit Thresholds**: Use delta parameterization
+   ```python
+   tau_1 = Beta('tau_1', -1.0, -3, 3, 0)  # First threshold free
+   delta_2 = Beta('delta_2', 0.0, -3, 3, 0)
+   tau_2 = tau_1 + exp(delta_2)  # Guaranteed tau_2 > tau_1
+   ```
+
+3. **Panel Data**: Always declare panel structure for models with random parameters
+   ```python
+   database = db.Database('model_name', df)
+   database.panel('ID')  # Required for consistent draws within individuals
+   ```
+
+4. **WTP Calculation**: Use Fieller method for statistically valid confidence intervals
+   ```python
+   from src.policy_analysis import WTPCalculator
+   wtp = WTPCalculator(result).compute()  # Defaults to Fieller method
+   ```
+
+### Deprecated Code
+
+The following files are archived and should NOT be used:
+- `full_model/src/models/archive/hcm_split_latents.py` - Two-stage estimation causes 15-50% attenuation bias
+
+See `full_model/src/models/archive/README.md` for details.
+
+---
+
 ## Methodology Notes
 
-### Two-Stage HCM vs ICLV
+### Terminology Clarification
 
-**HCM (two-stage)** causes **attenuation bias** (~15-50%):
-1. Estimate latent variables from Likert items
-2. Use LV estimates as fixed regressors → measurement error ignored
+- **HCM (Hybrid Choice Model)**: General framework name for models with latent psychological constructs
+- **ICLV (Integrated Choice and Latent Variable)**: The correct estimation method for HCM that integrates over the latent variable distribution
 
-**ICLV (simultaneous)** eliminates this bias:
-1. Integrate over the LV distribution
-2. Jointly estimate measurement + choice models
+**All HCM models in this framework use ICLV estimation.** The deprecated two-stage files in `full_model/src/models/` (`hcm_split_latents.py`, `hcm_extended.py`) are kept for reference but cause 15-50% attenuation bias.
 
-### When to Use Each
+### ICLV Estimation
+
+ICLV simultaneously estimates three components:
+1. **Structural model**: η = Γ×X + σ×ω (demographics → latent variables)
+2. **Measurement model**: Ordered probit linking LV to Likert indicators
+3. **Choice model**: Utility including LV effects
+
+Monte Carlo integration with Halton sequences:
+```
+L̂_n = (1/R) Σ_r [ P(choice|η_r) × Π_k P(I_k|η_r) ]
+```
+
+### When to Use Each Model
 
 | Model | Use When |
 |-------|----------|
 | MNL | Quick baseline, no heterogeneity |
 | MXL | Taste heterogeneity matters |
-| HCM (two-stage) | Fast estimation, large samples |
-| ICLV | Publication quality, accurate LV effects |
+| HCM Basic | Single latent variable effect |
+| HCM Full | Multiple latent constructs with structural equations |
+| ICLV | Full specification with multiple constructs |
 
 ---
 

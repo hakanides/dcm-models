@@ -29,7 +29,7 @@ If MXL estimates σ ≈ 0 on your data, it's not a bug - it means the data
 was generated without random taste heterogeneity. Use model_config.json
 to generate data with true random coefficients for MXL validation.
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -82,17 +82,31 @@ except ImportError:
 # DATA
 # =============================================================================
 
-def load_data(data_path: str, use_panel: bool = False) -> Tuple[pd.DataFrame, db.Database]:
+def load_data(data_path: str, use_panel: bool = True) -> Tuple[pd.DataFrame, db.Database]:
     """Load and prepare data for MXL estimation.
 
     Args:
         data_path: Path to CSV data file
-        use_panel: If True, specify panel structure using 'ID' column.
-                   NOTE: Panel structure is disabled by default due to
-                   compatibility issues with Biogeme 3.3.x.
+        use_panel: If True (default), specify panel structure using 'ID' column.
+                   This ensures same random coefficient draws across all choice
+                   tasks for each individual, which is REQUIRED for proper MXL
+                   estimation with panel data.
+
+                   Set to False only for cross-sectional data (one obs per person).
 
     Returns:
         Tuple of (DataFrame, Biogeme Database)
+
+    Note:
+        For panel data (T>1 observations per individual), panel structure is
+        ESSENTIAL for correct inference. Without it:
+        - Random coefficients would be redrawn for each observation
+        - Standard errors would be incorrect
+        - The model would not capture true taste heterogeneity
+
+        References:
+        - Train (2009): Discrete Choice Methods with Simulation, Ch. 6
+        - Biogeme documentation: Panel data examples
     """
     df = pd.read_csv(data_path)
     print(f"Loaded {len(df):,} observations")
@@ -108,16 +122,37 @@ def load_data(data_path: str, use_panel: bool = False) -> Tuple[pd.DataFrame, db
 
     database = db.Database('mxl_data', df_num)
 
-    # PANEL STRUCTURE: Disabled by default for Biogeme 3.3.x compatibility
-    # When enabled, ensures same random coefficient draw across choice tasks per individual
-    if use_panel and 'ID' in df_num.columns:
+    # PANEL STRUCTURE: Essential for panel data with multiple obs per individual
+    # Ensures same random coefficient draws across all choice tasks for each person
+    if use_panel:
+        if 'ID' not in df_num.columns:
+            raise ValueError(
+                "MXL with use_panel=True requires 'ID' column for panel structure. "
+                "Either add 'ID' column or set use_panel=False for cross-sectional data."
+            )
         database.panel('ID')
         n_individuals = df['ID'].nunique()
         n_obs_per_person = len(df) / n_individuals
-        print(f"Panel structure: {n_individuals} individuals, {n_obs_per_person:.1f} obs/person avg")
+        print(f"Panel structure ENABLED: {n_individuals} individuals, {n_obs_per_person:.1f} obs/person avg")
     else:
-        n_individuals = df['ID'].nunique() if 'ID' in df.columns else len(df)
-        print(f"Data: {n_individuals} individuals (panel structure disabled)")
+        if 'ID' not in df.columns:
+            raise ValueError(
+                "MXL requires 'ID' column to identify individuals. "
+                "Each row should have an individual identifier."
+            )
+        n_individuals = df['ID'].nunique()
+        n_obs_per_person = len(df) / n_individuals if n_individuals > 0 else 1
+
+        # Warn if panel data detected but panel structure not used
+        if n_obs_per_person > 1.5:
+            import warnings
+            warnings.warn(
+                f"Panel data detected ({n_obs_per_person:.1f} obs/person) but panel structure "
+                f"is DISABLED. This will produce incorrect standard errors for MXL. "
+                f"Set use_panel=True unless you have cross-sectional data.",
+                UserWarning
+            )
+        print(f"Data: {n_individuals} individuals (panel structure DISABLED)")
 
     return df, database
 
@@ -148,8 +183,10 @@ def mxl_1_random_fee(database: db.Database):
     B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)  # Bounded negative
 
     # Random fee: mean and std
-    B_FEE_MU = Beta('B_FEE_MU', -0.5, -10, 0, 0)  # Bounded negative
-    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.001, 5, 0)  # Bounded positive
+    # Lower bound on sigma: 0.0 would allow testing for no heterogeneity,
+    # but 0.001 prevents numerical issues. Use LR test (MNL vs MXL) instead.
+    B_FEE_MU = Beta('B_FEE_MU', -0.5, -5, 0, 0)  # Bounded negative
+    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.0, 3, 0)  # Allow 0 for testing
 
     # Random coefficient
     B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
@@ -178,12 +215,12 @@ def mxl_2_random_fee_dur(database: db.Database):
     ASC_paid = Beta('ASC_paid', 0, None, None, 0)
 
     # Random fee
-    B_FEE_MU = Beta('B_FEE_MU', -0.5, -10, 0, 0)  # Bounded negative
-    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.001, 5, 0)  # Bounded positive
+    B_FEE_MU = Beta('B_FEE_MU', -0.5, -5, 0, 0)  # Bounded negative
+    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.0, 3, 0)  # Allow 0 for testing
 
     # Random duration
-    B_DUR_MU = Beta('B_DUR_MU', -0.05, -5, 0, 0)  # Bounded negative
-    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.001, 2, 0)  # Bounded positive
+    B_DUR_MU = Beta('B_DUR_MU', -0.05, -2, 0, 0)  # Bounded negative
+    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.0, 1, 0)  # Allow 0 for testing
 
     B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
     B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * Draws('B_DUR_RND', 'NORMAL')
@@ -209,12 +246,12 @@ def mxl_3_random_all(database: db.Database):
     ASC_paid = Beta('ASC_paid', 0, None, None, 0)
 
     # Random fee
-    B_FEE_MU = Beta('B_FEE_MU', -0.5, -10, 0, 0)  # Bounded negative
-    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.001, 5, 0)  # Bounded positive
+    B_FEE_MU = Beta('B_FEE_MU', -0.5, -5, 0, 0)  # Bounded negative
+    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.1, 0.0, 3, 0)  # Allow 0 for testing
 
     # Random duration
-    B_DUR_MU = Beta('B_DUR_MU', -0.05, -5, 0, 0)  # Bounded negative
-    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.001, 2, 0)  # Bounded positive
+    B_DUR_MU = Beta('B_DUR_MU', -0.05, -2, 0, 0)  # Bounded negative
+    B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.01, 0.0, 1, 0)  # Allow 0 for testing
 
     B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
     B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * Draws('B_DUR_RND', 'NORMAL')

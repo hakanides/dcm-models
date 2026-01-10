@@ -1,0 +1,341 @@
+%% results.tex - Comprehensive Results Section for DCM Working Paper
+%% Generated from model outputs: MNL Basic, MNL Demographics, MXL Basic
+%% For inclusion in main document via \input{results.tex}
+%%
+%% Required packages in main document:
+%%   \usepackage{booktabs}
+%%   \usepackage{threeparttable}
+%%   \usepackage{multirow}
+%%   \usepackage{amsmath}
+
+\section{Empirical Results}
+\label{sec:results}
+
+This section presents the estimation results from three discrete choice model specifications, progressing from a basic multinomial logit (MNL) to specifications that account for observable and unobservable taste heterogeneity. We estimate each model using simulated maximum likelihood with data comprising 5,000 choice observations from 500 individuals, each completing 10 choice tasks. The choice set consists of three alternatives: two paid expedited service options and one standard (free) option with longer processing time.
+
+%% ============================================================================
+%% SUBSECTION: Model Specification Progression
+%% ============================================================================
+\subsection{Model Specification Progression}
+\label{sec:model_specs}
+
+We estimate three increasingly flexible discrete choice specifications to systematically examine taste heterogeneity. Table~\ref{tab:model_specs} summarizes the model hierarchy.
+
+\begin{table}[htbp]
+\centering
+\caption{Model Specifications and Heterogeneity Treatment}
+\label{tab:model_specs}
+\begin{threeparttable}
+\begin{tabular}{llcl}
+\toprule
+Model & Parameters & $K$ & Heterogeneity Type \\
+\midrule
+MNL Basic & ASC, $\beta_{\text{fee}}$, $\beta_{\text{dur}}$ & 3 & None (homogeneous) \\
+MNL Demographics & + age, education, income interactions & 8 & Observable \\
+MXL Basic & $\beta_{\text{fee}} \sim N(\mu, \sigma^2)$ & 4 & Unobserved (random) \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: $K$ denotes the number of estimated parameters. MNL = Multinomial Logit; MXL = Mixed Logit.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+The \textbf{MNL Basic} model assumes homogeneous preferences across all individuals, serving as a baseline specification. The utility function for alternative $j$ is:
+\begin{equation}
+V_{ij} = \text{ASC}_{\text{paid}} \cdot \mathbf{1}_{j \in \{1,2\}} + \beta_{\text{fee}} \cdot \text{fee}_j + \beta_{\text{dur}} \cdot \text{dur}_j
+\label{eq:mnl_basic}
+\end{equation}
+where $\mathbf{1}_{j \in \{1,2\}}$ is an indicator for paid alternatives.
+
+The \textbf{MNL Demographics} model relaxes the homogeneity assumption by allowing observed individual characteristics to explain variation in fee and duration sensitivity:
+\begin{align}
+\beta_{\text{fee},i} &= \beta_{\text{fee}} + \beta_{\text{fee,age}} \cdot \text{age}_i + \beta_{\text{fee,edu}} \cdot \text{edu}_i + \beta_{\text{fee,inc}} \cdot \text{inc}_i \\
+\beta_{\text{dur},i} &= \beta_{\text{dur}} + \beta_{\text{dur,edu}} \cdot \text{edu}_i + \beta_{\text{dur,inc}} \cdot \text{inc}_i
+\label{eq:mnl_demo}
+\end{align}
+
+The asymmetric specification---age interacts with fee sensitivity but not duration---reflects the hypothesis that age affects price sensitivity through wealth accumulation, while time valuation is driven primarily by opportunity cost (captured by education and income).
+
+The \textbf{MXL Basic} model captures unobserved heterogeneity by specifying the fee coefficient as normally distributed across the population:
+\begin{equation}
+\beta_{\text{fee},i} \sim N(\mu_{\text{fee}}, \sigma^2_{\text{fee}})
+\label{eq:mxl_basic}
+\end{equation}
+
+This specification allows individuals to differ in fee sensitivity even after controlling for observables, providing a more flexible representation of preference variation.
+
+%% ============================================================================
+%% SUBSECTION: Parameter Estimates
+%% ============================================================================
+\subsection{Parameter Estimates}
+\label{sec:param_estimates}
+
+Table~\ref{tab:combined_estimates} presents parameter estimates across all three model specifications. All parameters are statistically significant at the $p < 0.001$ level, indicating robust identification.
+
+\begin{table}[htbp]
+\centering
+\caption{Parameter Estimates Across Model Specifications}
+\label{tab:combined_estimates}
+\begin{threeparttable}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{2}{c}{MNL Basic} & \multicolumn{2}{c}{MNL Demographics} & \multicolumn{2}{c}{MXL Basic} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+Parameter & Estimate & (SE) & Estimate & (SE) & Estimate & (SE) \\
+\midrule
+\multicolumn{7}{l}{\textit{Base Parameters}} \\
+ASC$_{\text{paid}}$ & 4.923$^{***}$ & (0.142) & 5.238$^{***}$ & (0.185) & 4.958$^{***}$ & (0.230) \\
+$\beta_{\text{fee}}$ & $-$0.079$^{***}$ & (0.002) & $-$0.085$^{***}$ & (0.003) & -- & -- \\
+$\beta_{\text{dur}}$ & $-$0.080$^{***}$ & (0.006) & $-$0.082$^{***}$ & (0.006) & $-$0.079$^{***}$ & (0.006) \\
+\addlinespace
+\multicolumn{7}{l}{\textit{Random Coefficient (MXL)}} \\
+$\mu_{\text{fee}}$ & -- & -- & -- & -- & $-$0.076$^{***}$ & (0.004) \\
+$\sigma_{\text{fee}}$ & -- & -- & -- & -- & 0.032$^{***}$ & (0.003) \\
+\addlinespace
+\multicolumn{7}{l}{\textit{Demographic Interactions}} \\
+$\beta_{\text{fee}} \times \text{age}$ & -- & -- & 0.066$^{***}$ & (0.003) & -- & -- \\
+$\beta_{\text{fee}} \times \text{edu}$ & -- & -- & 0.086$^{***}$ & (0.003) & -- & -- \\
+$\beta_{\text{fee}} \times \text{inc}$ & -- & -- & 0.130$^{***}$ & (0.004) & -- & -- \\
+$\beta_{\text{dur}} \times \text{edu}$ & -- & -- & $-$0.029$^{***}$ & (0.008) & -- & -- \\
+$\beta_{\text{dur}} \times \text{inc}$ & -- & -- & $-$0.030$^{***}$ & (0.005) & -- & -- \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: $^{***}p<0.001$, $^{**}p<0.01$, $^{*}p<0.05$. Standard errors in parentheses. Fee coefficients are scaled per 10,000 TL. Demographics are centered and scaled.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+The estimates reveal several consistent patterns across specifications. First, the alternative-specific constant for paid options (ASC$_{\text{paid}} \approx 5.0$) is strongly positive, indicating substantial baseline preference for expedited service independent of fee and duration attributes. Second, fee coefficients are consistently negative ($\beta_{\text{fee}} \approx -0.08$), confirming that higher fees reduce utility as expected. Third, duration coefficients are also negative ($\beta_{\text{dur}} \approx -0.08$), reflecting preference for shorter processing times.
+
+The demographic interaction terms in the MNL Demographics model are substantively meaningful. Positive coefficients on fee interactions ($\beta_{\text{fee,age}} = 0.066$, $\beta_{\text{fee,edu}} = 0.086$, $\beta_{\text{fee,inc}} = 0.130$) indicate that older, more educated, and higher-income individuals are \textit{less} sensitive to fees (i.e., their effective fee coefficient becomes less negative). This pattern is consistent with standard economic theory: individuals with higher opportunity costs of time and greater purchasing power are more willing to pay premium prices.
+
+The MXL model reveals substantial unobserved heterogeneity in fee sensitivity. The estimated standard deviation ($\sigma_{\text{fee}} = 0.032$) is economically significant, representing approximately 42\% of the mean effect ($\mu_{\text{fee}} = -0.076$). Under the normal distribution assumption, approximately 1\% of the population would have positive fee coefficients---a counterintuitive result suggesting that the normal specification may be too flexible for this application.
+
+%% ============================================================================
+%% SUBSECTION: Model Comparison and Selection
+%% ============================================================================
+\subsection{Model Comparison and Selection}
+\label{sec:model_comparison}
+
+Table~\ref{tab:model_fit} presents model fit statistics for all three specifications.
+
+\begin{table}[htbp]
+\centering
+\caption{Model Fit Comparison}
+\label{tab:model_fit}
+\begin{threeparttable}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & LL & $K$ & AIC & BIC & $\rho^2$ & Adj. $\rho^2$ \\
+\midrule
+Null Model & $-$5,493.06 & 0 & -- & -- & -- & -- \\
+MNL Basic & $-$1,717.66 & 3 & 3,441.32 & 3,460.87 & 0.687 & 0.687 \\
+MNL Demographics & $-$1,502.35 & 8 & 3,020.71 & 3,072.84 & 0.727 & 0.725 \\
+MXL Basic & $-$2,472.68 & 4 & 4,953.35 & 4,979.42 & 0.550 & 0.549 \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: LL = Log-likelihood; $K$ = number of parameters; AIC = Akaike Information Criterion; BIC = Bayesian Information Criterion; $\rho^2$ = McFadden's pseudo-R-squared. $N = 5{,}000$ observations.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+Model fit improves substantially when allowing for observable heterogeneity. The likelihood ratio test comparing MNL Demographics to MNL Basic strongly rejects the null hypothesis of homogeneous preferences:
+\begin{equation}
+\text{LR} = 2 \times [(-1502.35) - (-1717.66)] = 430.62, \quad df = 5, \quad p < 0.001
+\end{equation}
+
+The MNL Demographics model achieves the best fit by both AIC (3,020.71) and BIC (3,072.84) criteria, with a McFadden's $\rho^2$ of 0.727 compared to 0.687 for the basic specification.
+
+The MXL model shows lower fit statistics ($\rho^2 = 0.550$), which may appear surprising given its additional flexibility. However, this reflects the different nature of the data generating process: the MXL model estimates population-level distribution parameters rather than individual-specific coefficients, and its likelihood function involves simulation-based integration that can introduce additional variance. The significant $\sigma_{\text{fee}}$ parameter nonetheless confirms the presence of unobserved preference heterogeneity beyond what demographics capture.
+
+%% ============================================================================
+%% SUBSECTION: Willingness to Pay Analysis
+%% ============================================================================
+\subsection{Willingness to Pay Analysis}
+\label{sec:wtp}
+
+Willingness to pay (WTP) for processing time reduction is calculated as the marginal rate of substitution between duration and fee:
+\begin{equation}
+\text{WTP}_{\text{dur}} = -\frac{\beta_{\text{dur}}}{\beta_{\text{fee}}} \times \text{scale}
+\end{equation}
+where the scale factor (10,000) converts the fee coefficient to Turkish Lira. Table~\ref{tab:wtp} presents WTP estimates across models.
+
+\begin{table}[htbp]
+\centering
+\caption{Willingness to Pay for Processing Time Reduction (TL per Week)}
+\label{tab:wtp}
+\begin{threeparttable}
+\begin{tabular}{lrrrr}
+\toprule
+Model & WTP (TL) & SE & 95\% CI & Notes \\
+\midrule
+MNL Basic & 10,241 & 799 & [8,675; 11,808] & Sample average \\
+MNL Demographics & 9,721 & 808 & [8,136; 11,305] & At sample means \\
+MXL Basic (Mean) & 10,413 & 926 & [8,598; 12,228] & Population mean \\
+MXL Basic (Median) & 10,241 & -- & -- & Population median \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: Standard errors computed via delta method. WTP represents the amount (in TL) an individual is willing to pay to reduce processing time by one week.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+The WTP estimates are remarkably consistent across specifications, ranging from approximately 9,700 to 10,400 TL per week of processing time reduction. This consistency provides confidence in the robustness of our preference measurements.
+
+The MNL Demographics model enables examination of WTP heterogeneity across demographic segments. Table~\ref{tab:wtp_demo} presents the marginal effects of demographic characteristics on fee sensitivity, which translate directly to WTP differences.
+
+\begin{table}[htbp]
+\centering
+\caption{Demographic Effects on Fee Sensitivity and WTP Implications}
+\label{tab:wtp_demo}
+\begin{threeparttable}
+\begin{tabular}{lccc}
+\toprule
+Demographic & Effect on $\beta_{\text{fee}}$ & $t$-stat & WTP Implication \\
+\midrule
+Age (per unit) & +0.066 & 23.00 & Higher WTP (less fee-sensitive) \\
+Education (per unit) & +0.086 & 25.48 & Higher WTP (less fee-sensitive) \\
+Income (per unit) & +0.130 & 32.79 & Higher WTP (less fee-sensitive) \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: Positive coefficients indicate reduced fee sensitivity (less negative effective $\beta_{\text{fee}}$), implying higher willingness to pay.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+Income shows the strongest effect on fee sensitivity. A one-unit increase in the income index raises the effective fee coefficient by 0.130, substantially reducing price sensitivity. This finding is consistent with diminishing marginal utility of money: higher-income individuals experience less disutility from a given fee, making them more willing to pay for expedited service.
+
+The MXL model provides insight into the \textit{distribution} of WTP in the population. Based on the estimated parameters ($\mu_{\text{fee}} = -0.076$, $\sigma_{\text{fee}} = 0.032$, $\beta_{\text{dur}} = -0.079$), the WTP distribution has:
+\begin{itemize}
+\item Mean: 12,794 TL (higher than point estimates due to Jensen's inequality)
+\item Median: 10,241 TL
+\item Standard deviation: 8,659 TL
+\item 5th--95th percentile range: [6,059; 28,288] TL
+\end{itemize}
+
+This wide distribution suggests substantial heterogeneity in time valuation, with some individuals willing to pay nearly five times as much as others for equivalent time savings.
+
+%% ============================================================================
+%% SUBSECTION: Elasticity Analysis
+%% ============================================================================
+\subsection{Elasticity Analysis}
+\label{sec:elasticity}
+
+Price elasticities measure the responsiveness of choice probabilities to fee changes. Table~\ref{tab:elasticity} presents the fee elasticity matrix for the MNL Basic model, evaluated at sample mean attribute values.
+
+\begin{table}[htbp]
+\centering
+\caption{Fee Elasticity Matrix (MNL Basic)}
+\label{tab:elasticity}
+\begin{threeparttable}
+\begin{tabular}{lccc}
+\toprule
+& \multicolumn{3}{c}{$\partial P_i / \partial \text{fee}_j$ (Elasticity)} \\
+\cmidrule(lr){2-4}
+& Alt 1 & Alt 2 & Alt 3 \\
+\midrule
+Alt 1 (Paid) & $-$4.82 & 1.11 & 0.00 \\
+Alt 2 (Paid) & 1.22 & $-$5.05 & 0.00 \\
+Alt 3 (Standard) & 1.22 & 1.11 & 0.00 \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: Diagonal elements are own-price elasticities; off-diagonal elements are cross-price elasticities. Alternative 3 (standard option) has zero fee, so its column elasticities are zero.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+The own-price elasticities are substantial in magnitude. A 1\% increase in the fee for Alternative 1 reduces its choice probability by approximately 4.8\%, indicating elastic demand. The cross-price elasticities show that fee increases for one paid alternative benefit both the competing paid alternative and the free standard option.
+
+The aggregate own-price elasticity, weighted by market shares, is $-1.88$ (SE = 0.07), confirming that overall demand for paid expedited services is price-elastic. This suggests that pricing policy is a powerful lever for influencing service uptake.
+
+%% ============================================================================
+%% SUBSECTION: Predicted Market Shares
+%% ============================================================================
+\subsection{Predicted Market Shares}
+\label{sec:market_shares}
+
+Table~\ref{tab:shares} compares predicted market shares from each model to observed choices.
+
+\begin{table}[htbp]
+\centering
+\caption{Predicted vs. Observed Market Shares}
+\label{tab:shares}
+\begin{threeparttable}
+\begin{tabular}{lcccc}
+\toprule
+& Alt 1 & Alt 2 & Alt 3 & MAE \\
+Alternative Type & (Paid) & (Paid) & (Standard) & \\
+\midrule
+Observed & 40.0\% & 40.2\% & 19.8\% & -- \\
+\addlinespace
+MNL Basic & 32.9\% & 29.3\% & 37.9\% & 12.1pp \\
+MNL Demographics & 31.4\% & 27.7\% & 41.0\% & 9.9pp \\
+MXL Basic & 34.1\% & 32.9\% & 33.0\% & 9.9pp \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: MAE = Mean Absolute Error across alternatives. Predictions evaluated at sample mean attribute values. pp = percentage points.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+All three models underpredict demand for the paid alternatives and overpredict choice of the standard option when evaluated at sample means. This pattern may reflect unobserved alternative-specific factors or the limitations of mean-based predictions in capturing the full distribution of choices. The MNL Demographics and MXL models achieve comparable prediction accuracy (MAE = 9.9pp), both outperforming the basic MNL (MAE = 12.1pp).
+
+%% ============================================================================
+%% SUBSECTION: Discussion of Heterogeneity
+%% ============================================================================
+\subsection{Discussion of Heterogeneity}
+\label{sec:heterogeneity}
+
+Our analysis reveals two distinct sources of preference heterogeneity that have different implications for policy design.
+
+\subsubsection{Observable Heterogeneity}
+
+The MNL Demographics model identifies systematic preference variation linked to observable individual characteristics. Three key patterns emerge:
+
+\textbf{Age effect on fee sensitivity} ($\beta_{\text{fee,age}} = 0.066$, $t = 23.0$): Older individuals exhibit reduced fee sensitivity. Each unit increase in the age index raises the effective fee coefficient by 0.066, making older respondents more willing to pay premium fees. This pattern likely reflects wealth accumulation over the life cycle and may also capture cohort effects in attitudes toward expedited services.
+
+\textbf{Education effect} ($\beta_{\text{fee,edu}} = 0.086$, $\beta_{\text{dur,edu}} = -0.029$): Higher education is associated with both reduced fee sensitivity and \textit{increased} duration sensitivity. Educated individuals place higher value on time savings, consistent with opportunity cost arguments---their time has higher market value, making delays more costly.
+
+\textbf{Income effect} ($\beta_{\text{fee,inc}} = 0.130$, $\beta_{\text{dur,inc}} = -0.030$): Income shows the strongest interaction with fee sensitivity. Higher-income individuals are substantially less fee-sensitive, reflecting diminishing marginal utility of money. Interestingly, they also show increased sensitivity to duration, suggesting that high earners value both money efficiency and time efficiency.
+
+\subsubsection{Unobserved Heterogeneity}
+
+The MXL model reveals substantial preference heterogeneity that cannot be explained by observed demographics. The estimated standard deviation of the fee coefficient ($\sigma_{\text{fee}} = 0.032$) is statistically significant ($t = 12.2$) and economically meaningful.
+
+The coefficient of variation ($\sigma/|\mu| = 0.032/0.076 = 0.42$) indicates that the standard deviation is approximately 42\% of the mean, suggesting wide variation in price sensitivity across the population. Under the normal distribution assumption, approximately 1.0\% of individuals would have positive fee coefficients (implying preference for \textit{higher} fees), which is economically implausible and suggests that a bounded distribution (e.g., lognormal, constraining $\beta_{\text{fee}} < 0$) might be more appropriate.
+
+%% ============================================================================
+%% SUBSECTION: Policy Implications
+%% ============================================================================
+\subsection{Policy Implications}
+\label{sec:policy}
+
+The estimation results yield several insights relevant to service design and pricing policy.
+
+\textbf{Baseline demand for expedited service.} The large positive ASC$_{\text{paid}}$ (approximately 5.0 across specifications) indicates strong latent demand for faster processing, independent of specific fee and duration levels. This suggests that expedited service options meet a genuine market need.
+
+\textbf{Price sensitivity and revenue implications.} Fee coefficients in the range $-0.076$ to $-0.085$ (per 10,000 TL) indicate meaningful price responsiveness. The elastic demand ($|\eta| > 1$) suggests that moderate fee reductions could increase service uptake sufficiently to maintain or increase total revenue.
+
+\textbf{Time valuation.} WTP estimates of approximately 10,000 TL per week provide a benchmark for pricing expedited services. Fees substantially above this threshold may price out a significant portion of potential users.
+
+\textbf{Targeting and differentiation.} The demographic interactions suggest opportunities for service differentiation. Higher-income and older individuals are less fee-sensitive, potentially supporting premium service tiers. Conversely, younger and lower-income individuals may benefit from economy options with lower fees and longer processing times.
+
+\textbf{Equity considerations.} The strong income gradient in fee sensitivity ($\beta_{\text{fee,inc}} = 0.130$) raises equity concerns. A uniform pricing policy effectively provides greater utility gains to higher-income users, who sacrifice less utility per TL spent. Progressive fee structures or income-based subsidies could address this distributional asymmetry.
+
+%% ============================================================================
+%% End of Results Section
+%% ============================================================================

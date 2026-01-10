@@ -17,7 +17,7 @@ This model captures OBSERVED heterogeneity in taste (demographic-based).
 Usage:
     python src/models/mnl_demographics.py --data data/simulated/fresh_simulation.csv
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -34,6 +34,14 @@ import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
+
+
+# =============================================================================
+# MODEL CONSTANTS
+# =============================================================================
+
+# Availability dict for alternatives (used in logit and null LL calculation)
+AV_DICT = {1: 1, 2: 1, 3: 1}  # All alternatives always available
 
 
 # =============================================================================
@@ -88,9 +96,8 @@ def create_mnl_demographics(database: db.Database):
     V3 = B_FEE_i * fee3 + B_DUR_i * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
-    logprob = models.loglogit(V, av, CHOICE)
+    logprob = models.loglogit(V, AV_DICT, CHOICE)
 
     return logprob, 'MNL_Demographics'
 
@@ -167,7 +174,7 @@ def estimate_mnl_demographics(data_path: str,
     print("\nEstimating model...")
     biogeme_model = bio.BIOGEME(database, logprob)
     biogeme_model.model_name = model_name
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     results = biogeme_model.estimate()
 

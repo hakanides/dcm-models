@@ -18,7 +18,7 @@ Model Specifications:
 Usage:
     python src/models/mxl_extended.py --data data/simulated/fresh_simulation.csv --draws 500
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -360,13 +360,21 @@ def run_mxl_extended(data_path: str, output_dir: str = 'results/mxl_extended',
     # Prepare data
     df = prepare_data(data_path)
     n_obs = len(df)
-    n_ind = df['ID'].nunique() if 'ID' in df.columns else n_obs
+
+    # Validate panel structure exists (required for MXL with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "MXL requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_ind = df['ID'].nunique()
 
     print(f"\nData: {n_obs} observations from {n_ind} individuals")
     print(f"Draws: {n_draws}")
 
-    # Create database
+    # Create database with panel structure for cluster-robust inference
     database = db.Database('mxl_extended', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws
     null_ll = n_obs * np.log(1/3)
 
     # Model list

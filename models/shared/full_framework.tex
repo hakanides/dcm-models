@@ -1,0 +1,486 @@
+%% full_framework.tex - Comprehensive Methodological Framework for DCM Research
+%% Covers the complete project architecture, model taxonomy, and validation philosophy
+%% For inclusion in main document via \input{full_framework.tex}
+%%
+%% Required packages in main document:
+%%   \usepackage{amsmath}
+%%   \usepackage{amssymb}
+%%   \usepackage{booktabs}
+%%   \usepackage{threeparttable}
+%%   \usepackage{multirow}
+
+\section{Methodological Framework}
+\label{sec:methodology}
+
+This section presents the theoretical foundations and methodological architecture underlying our discrete choice modeling (DCM) framework. We develop a systematic approach to understanding preference heterogeneity in choice behavior, progressing from basic multinomial logit models through increasingly sophisticated specifications that incorporate observable demographics, unobserved random coefficients, and latent psychological constructs.
+
+%% ============================================================================
+%% SUBSECTION: Theoretical Foundations
+%% ============================================================================
+\subsection{Theoretical Foundations}
+\label{sec:theory}
+
+Our framework builds upon the Random Utility Maximization (RUM) paradigm, the foundational theory of discrete choice analysis \citep{mcfadden1974conditional, train2009discrete}. Under RUM, decision-makers are assumed to choose the alternative that maximizes their utility, subject to the constraint that researchers cannot perfectly observe all factors influencing choice.
+
+\subsubsection{The Random Utility Model}
+
+Let individual $n$ face a choice among $J$ mutually exclusive alternatives. The utility that individual $n$ derives from alternative $j$ is decomposed as:
+\begin{equation}
+U_{nj} = V_{nj} + \varepsilon_{nj}
+\label{eq:rum}
+\end{equation}
+where $V_{nj}$ denotes the \textit{systematic} (or representative) component of utility, which is a function of observed attributes and estimated parameters, and $\varepsilon_{nj}$ represents the \textit{random} component, capturing unobserved factors affecting choice. Individual $n$ chooses alternative $i$ if and only if $U_{ni} > U_{nj}$ for all $j \neq i$.
+
+The systematic utility is typically specified as a linear function of observed variables:
+\begin{equation}
+V_{nj} = \sum_{k} \beta_k x_{njk}
+\label{eq:systematic}
+\end{equation}
+where $x_{njk}$ represents the $k$th attribute of alternative $j$ as faced by individual $n$, and $\beta_k$ denotes the marginal utility (or taste parameter) associated with attribute $k$.
+
+\subsubsection{Gumbel Distribution and Logit Probabilities}
+
+When the random components $\varepsilon_{nj}$ are assumed to be independently and identically distributed (IID) according to the Type I Extreme Value (Gumbel) distribution:
+\begin{equation}
+F(\varepsilon) = \exp(-\exp(-\varepsilon))
+\label{eq:gumbel}
+\end{equation}
+the choice probability takes the closed-form multinomial logit expression:
+\begin{equation}
+P_{nj} = \frac{\exp(V_{nj})}{\sum_{k=1}^{J} \exp(V_{nk})}
+\label{eq:logit}
+\end{equation}
+
+This elegant result, derived by \citet{mcfadden1974conditional}, forms the basis for the multinomial logit (MNL) model and its extensions. The Gumbel assumption, while restrictive, enables tractable estimation and provides a natural starting point for more flexible specifications.
+
+\subsubsection{Independence from Irrelevant Alternatives}
+
+A consequence of the IID Gumbel assumption is the Independence from Irrelevant Alternatives (IIA) property:
+\begin{equation}
+\frac{P_{ni}}{P_{nj}} = \frac{\exp(V_{ni})}{\exp(V_{nj})} = \exp(V_{ni} - V_{nj})
+\label{eq:iia}
+\end{equation}
+
+The ratio of choice probabilities between any two alternatives depends only on the attributes of those alternatives, not on the characteristics or even the existence of other alternatives in the choice set. While computationally convenient, this property can be behaviorally implausible in many contexts, motivating the development of more flexible model specifications.
+
+%% ============================================================================
+%% SUBSECTION: Research Architecture
+%% ============================================================================
+\subsection{Research Architecture}
+\label{sec:architecture}
+
+We implement a two-tier research architecture designed to balance methodological rigor with computational efficiency. This structure separates model validation from full-scale empirical analysis.
+
+\subsubsection{Two-Tier Design Philosophy}
+
+\textbf{Tier 1: Isolated Validation Models.} The first tier comprises six self-contained model specifications, each with a matched data generating process (DGP). These models serve as validation laboratories, allowing researchers to verify that estimation procedures correctly recover known parameter values before applying them to real data. Key characteristics include:
+\begin{itemize}
+\item Moderate sample sizes ($N = 500$ individuals, $T = 10$ choice tasks)
+\item Known true parameters specified in configuration files
+\item Execution times ranging from 30 seconds (MNL) to 10 minutes (ICLV)
+\item Complete isolation: each model can be run independently
+\end{itemize}
+
+\textbf{Tier 2: Full Research Pipeline.} The second tier provides a comprehensive estimation framework with 32+ model specifications spanning the MNL, MXL, HCM, and ICLV families. This tier supports large-scale empirical analysis with:
+\begin{itemize}
+\item Flexible sample sizes and choice task configurations
+\item Automated model comparison and selection procedures
+\item Publication-ready output generation (LaTeX tables, figures)
+\item Robust standard error computation and bootstrap inference
+\end{itemize}
+
+\subsubsection{Matching DGP Validation Approach}
+
+A central methodological innovation is the \textit{matching DGP} approach to model validation. For each model specification, we implement a simulation procedure that generates synthetic choice data using the exact same functional form and distributional assumptions as the estimation model. This enables rigorous parameter recovery testing:
+
+\begin{enumerate}
+\item \textbf{Configuration}: Specify true parameter values $\boldsymbol{\theta}^*$ in a structured configuration file
+\item \textbf{Simulation}: Generate choice data $\{(y_n, \mathbf{X}_n)\}_{n=1}^N$ using $\boldsymbol{\theta}^*$ and the model's DGP
+\item \textbf{Estimation}: Apply the estimation procedure to recover $\hat{\boldsymbol{\theta}}$
+\item \textbf{Validation}: Compare $\hat{\boldsymbol{\theta}}$ to $\boldsymbol{\theta}^*$ using bias, coverage, and precision metrics
+\end{enumerate}
+
+This approach provides confidence that estimation procedures are correctly implemented and identifies the conditions under which each model specification performs well.
+
+%% ============================================================================
+%% SUBSECTION: Model Taxonomy
+%% ============================================================================
+\subsection{Model Taxonomy}
+\label{sec:taxonomy}
+
+Our framework encompasses four model families, each addressing different sources and structures of preference heterogeneity. Table~\ref{tab:taxonomy} summarizes the complete taxonomy.
+
+\begin{table}[htbp]
+\centering
+\caption{Discrete Choice Model Taxonomy}
+\label{tab:taxonomy}
+\begin{threeparttable}
+\begin{tabular}{llcll}
+\toprule
+Family & Model & Specifications & Heterogeneity & Estimation \\
+\midrule
+\multirow{4}{*}{MNL} & Basic & 1 & None & MLE \\
+ & Functional forms & 3 & None & MLE \\
+ & Demographics & 2 & Observable & MLE \\
+ & Interactions & 2 & Observable & MLE \\
+\addlinespace
+\multirow{4}{*}{MXL} & Normal & 2 & Unobserved & SML \\
+ & Lognormal & 2 & Unobserved & SML \\
+ & Bounded & 2 & Unobserved & SML \\
+ & Correlated & 2 & Unobserved & SML \\
+\addlinespace
+\multirow{3}{*}{HCM} & Single LV & 2 & Latent & Two-stage \\
+ & Multiple LV & 4 & Latent & Two-stage \\
+ & Domain-specific & 2 & Latent & Two-stage \\
+\addlinespace
+ICLV & Simultaneous & 2+ & Latent & SML (joint) \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: MNL = Multinomial Logit; MXL = Mixed Logit; HCM = Hybrid Choice Model; ICLV = Integrated Choice and Latent Variable; MLE = Maximum Likelihood Estimation; SML = Simulated Maximum Likelihood; LV = Latent Variable.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\subsubsection{MNL Family}
+
+The multinomial logit family serves as the foundation, with specifications ranging from a basic three-parameter model to extended forms incorporating:
+\begin{itemize}
+\item \textbf{Alternative functional forms}: Logarithmic, quadratic, and piecewise specifications for attribute effects
+\item \textbf{Demographic interactions}: Age, education, and income effects on taste parameters
+\item \textbf{Cross-demographic interactions}: Higher-order interaction terms (e.g., age $\times$ income)
+\end{itemize}
+
+\subsubsection{MXL Family}
+
+Mixed logit models relax the IIA property by allowing taste parameters to vary across individuals according to specified distributions:
+\begin{itemize}
+\item \textbf{Normal}: $\beta_n \sim N(\mu, \sigma^2)$, allowing both positive and negative values
+\item \textbf{Lognormal}: $\beta_n = -\exp(\mu + \sigma \nu)$, $\nu \sim N(0,1)$, constraining sign
+\item \textbf{Uniform}: $\beta_n \sim U[a, b]$, bounded heterogeneity
+\item \textbf{Correlated}: Full covariance structure $\boldsymbol{\beta}_n \sim N(\boldsymbol{\mu}, \boldsymbol{\Sigma})$
+\end{itemize}
+
+\subsubsection{HCM Family}
+
+Hybrid choice models incorporate latent psychological constructs that influence choice behavior. These models comprise three interconnected components:
+\begin{itemize}
+\item \textbf{Structural model}: Links observed demographics to latent variables
+\item \textbf{Measurement model}: Relates latent variables to observed indicators (Likert items)
+\item \textbf{Choice model}: Incorporates latent variables as determinants of taste parameters
+\end{itemize}
+
+\subsubsection{ICLV Models}
+
+Integrated Choice and Latent Variable models estimate all three HCM components simultaneously, avoiding the attenuation bias inherent in two-stage approaches (discussed in Section~\ref{sec:attenuation}).
+
+%% ============================================================================
+%% SUBSECTION: Heterogeneity Treatment
+%% ============================================================================
+\subsection{Treatment of Preference Heterogeneity}
+\label{sec:heterogeneity}
+
+A central concern in discrete choice modeling is the treatment of preference heterogeneity---the recognition that individuals differ systematically in their tastes and sensitivities. Our framework addresses three distinct sources of heterogeneity.
+
+\subsubsection{Observable Heterogeneity}
+
+Observable heterogeneity arises when taste parameters vary as a function of measured individual characteristics. We specify individual-specific coefficients as:
+\begin{equation}
+\beta_{k,n} = \beta_k + \sum_{m} \gamma_{km} z_{nm}
+\label{eq:observable_het}
+\end{equation}
+where $z_{nm}$ denotes demographic characteristic $m$ for individual $n$ (typically centered and scaled), and $\gamma_{km}$ captures the interaction effect of demographic $m$ on taste parameter $k$.
+
+For example, fee sensitivity may vary with income:
+\begin{equation}
+\beta_{\text{fee},n} = \beta_{\text{fee}} + \gamma_{\text{fee,inc}} \cdot (\text{income}_n - \bar{\text{income}})
+\label{eq:fee_income}
+\end{equation}
+
+Positive $\gamma_{\text{fee,inc}}$ indicates that higher-income individuals have less negative (i.e., less sensitive) fee coefficients.
+
+\subsubsection{Unobserved Heterogeneity}
+
+Unobserved heterogeneity captures taste variation that cannot be explained by measured characteristics. In the mixed logit framework, we specify:
+\begin{equation}
+\beta_{k,n} = \mu_k + \sigma_k \cdot \nu_{kn}, \quad \nu_{kn} \sim N(0,1)
+\label{eq:unobserved_het}
+\end{equation}
+where $\mu_k$ is the population mean of parameter $k$, $\sigma_k$ is the population standard deviation, and $\nu_{kn}$ is an individual-specific random draw.
+
+The choice probability becomes:
+\begin{equation}
+P_{nj} = \int \frac{\exp(V_{nj}(\boldsymbol{\beta}))}{\sum_k \exp(V_{nk}(\boldsymbol{\beta}))} \cdot f(\boldsymbol{\beta}|\boldsymbol{\theta}) \, d\boldsymbol{\beta}
+\label{eq:mxl_prob}
+\end{equation}
+where the integral is over the distribution of random parameters. This integral lacks a closed-form solution and must be approximated numerically (see Section~\ref{sec:estimation}).
+
+\subsubsection{Latent Psychological Constructs}
+
+Latent variable heterogeneity arises when unobserved psychological attitudes or values systematically influence choice behavior. We model this through a structural equation:
+\begin{equation}
+\eta_{m,n} = \gamma_{m,0} + \sum_p \gamma_{m,p} z_{np} + \zeta_{m,n}, \quad \zeta_{m,n} \sim N(0, \sigma^2_{\zeta,m})
+\label{eq:structural}
+\end{equation}
+where $\eta_{m,n}$ is latent variable $m$ for individual $n$, $z_{np}$ are demographic predictors, and $\zeta_{m,n}$ is the disturbance term.
+
+The latent variable then enters the choice model as a taste shifter:
+\begin{equation}
+\beta_{k,n} = \beta_k + \sum_m \lambda_{km} \eta_{m,n}
+\label{eq:lv_taste}
+\end{equation}
+where $\lambda_{km}$ captures the effect of latent variable $m$ on taste parameter $k$.
+
+%% ============================================================================
+%% SUBSECTION: Estimation Methodology
+%% ============================================================================
+\subsection{Estimation Methodology}
+\label{sec:estimation}
+
+We employ maximum likelihood estimation throughout, with simulation-based methods for models involving intractable integrals.
+
+\subsubsection{Maximum Likelihood for MNL}
+
+For the basic MNL model, the log-likelihood function is:
+\begin{equation}
+\mathcal{LL}(\boldsymbol{\theta}) = \sum_{n=1}^{N} \sum_{j=1}^{J} y_{nj} \ln P_{nj}(\boldsymbol{\theta})
+\label{eq:ll_mnl}
+\end{equation}
+where $y_{nj} = 1$ if individual $n$ chose alternative $j$ and $y_{nj} = 0$ otherwise. The MNL log-likelihood is globally concave, ensuring unique maximum likelihood estimates when the model is identified.
+
+\subsubsection{Simulated Maximum Likelihood for MXL}
+
+When choice probabilities involve intractable integrals, we employ simulated maximum likelihood (SML). The simulated probability is:
+\begin{equation}
+\tilde{P}_{nj} = \frac{1}{R} \sum_{r=1}^{R} \frac{\exp(V_{nj}(\boldsymbol{\beta}^{(r)}_n))}{\sum_k \exp(V_{nk}(\boldsymbol{\beta}^{(r)}_n))}
+\label{eq:sml}
+\end{equation}
+where $\boldsymbol{\beta}^{(r)}_n$ is the $r$th draw from the mixing distribution for individual $n$, and $R$ is the total number of simulation draws.
+
+We use Halton sequences rather than pseudo-random draws to improve simulation efficiency. Halton sequences provide low-discrepancy coverage of the unit hypercube, reducing simulation variance for a given number of draws \citep{train2000halton}.
+
+\subsubsection{Monte Carlo Integration}
+
+For ICLV models, the joint likelihood involves integration over the latent variable distribution:
+\begin{equation}
+L_n = \int P(y_n | \boldsymbol{\eta}) \cdot \prod_{k} P(I_{nk} | \boldsymbol{\eta}) \cdot f(\boldsymbol{\eta} | \mathbf{z}_n) \, d\boldsymbol{\eta}
+\label{eq:iclv_likelihood}
+\end{equation}
+where $P(y_n | \boldsymbol{\eta})$ is the choice probability conditional on latent variables, $P(I_{nk} | \boldsymbol{\eta})$ is the probability of observing indicator response $I_{nk}$ given latent values, and $f(\boldsymbol{\eta} | \mathbf{z}_n)$ is the conditional distribution of latent variables given demographics.
+
+We approximate this integral using Monte Carlo methods with Halton draws, typically using $R = 500$ to $R = 1000$ draws depending on the number of latent dimensions.
+
+%% ============================================================================
+%% SUBSECTION: Attenuation Bias and ICLV Solution
+%% ============================================================================
+\subsection{Attenuation Bias and the ICLV Solution}
+\label{sec:attenuation}
+
+A critical methodological issue in hybrid choice modeling is \textit{attenuation bias}---the systematic underestimation of latent variable effects when using two-stage estimation procedures.
+
+\subsubsection{The Measurement Error Problem}
+
+In conventional two-stage HCM estimation:
+\begin{enumerate}
+\item \textbf{Stage 1}: Estimate latent variable scores $\hat{\eta}_n$ from indicator responses using factor analysis or structural equation modeling
+\item \textbf{Stage 2}: Include $\hat{\eta}_n$ as a regressor in the choice model, estimating $\lambda$ coefficients
+\end{enumerate}
+
+The problem arises because $\hat{\eta}_n$ contains measurement error:
+\begin{equation}
+\hat{\eta}_n = \eta_n + e_n
+\label{eq:measurement_error}
+\end{equation}
+where $e_n$ is the estimation error from Stage 1. When $\hat{\eta}_n$ is used as a regressor in Stage 2, classical errors-in-variables theory shows that the coefficient is attenuated:
+\begin{equation}
+\text{plim}(\hat{\lambda}) = \lambda \cdot \frac{\text{Var}(\eta)}{\text{Var}(\eta) + \text{Var}(e)} = \lambda \cdot \rho
+\label{eq:attenuation}
+\end{equation}
+where $\rho < 1$ is the reliability ratio. The estimated effect is biased toward zero.
+
+\subsubsection{Magnitude of Attenuation}
+
+Empirical evidence from our validation studies indicates substantial attenuation in two-stage HCM estimation:
+
+\begin{table}[htbp]
+\centering
+\caption{Attenuation Bias in Two-Stage vs. Simultaneous Estimation}
+\label{tab:attenuation}
+\begin{threeparttable}
+\begin{tabular}{lcccc}
+\toprule
+Parameter & True Value & Two-Stage & ICLV & Two-Stage Bias \\
+\midrule
+$\lambda_{\text{fee,PatBlind}}$ & $-0.100$ & $-0.067$ & $-0.097$ & $-33\%$ \\
+$\lambda_{\text{fee,SecDL}}$ & $-0.080$ & $-0.052$ & $-0.078$ & $-35\%$ \\
+$\lambda_{\text{dur,PatBlind}}$ & $+0.060$ & $+0.042$ & $+0.058$ & $-30\%$ \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item Note: Results from parameter recovery simulations with $N = 500$, $T = 10$. Bias calculated as $(\hat{\theta} - \theta^*)/|\theta^*|$.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+Two-stage estimation typically underestimates latent variable effects by 15--35\%, with the magnitude depending on the reliability of the latent variable measurement.
+
+\subsubsection{The ICLV Solution}
+
+Integrated Choice and Latent Variable (ICLV) models eliminate attenuation bias by estimating all model components simultaneously. The joint likelihood function is:
+\begin{equation}
+L_n = \int \underbrace{P(y_n | \boldsymbol{\eta})}_{\text{Choice}} \times \underbrace{\prod_{k} P(I_{nk} | \boldsymbol{\eta})}_{\text{Measurement}} \times \underbrace{f(\boldsymbol{\eta} | \mathbf{z}_n)}_{\text{Structural}} \, d\boldsymbol{\eta}
+\label{eq:iclv_joint}
+\end{equation}
+
+By integrating over the distribution of latent variables rather than conditioning on point estimates, ICLV properly accounts for measurement uncertainty. The resulting estimates are consistent and asymptotically efficient.
+
+\subsubsection{Measurement Model Specification}
+
+The measurement component employs ordered probit models for Likert-scale indicators. For indicator $k$ with $C$ categories:
+\begin{equation}
+P(I_{nk} = c | \eta_n) = \Phi(\tau_{k,c} - \lambda_k \eta_n) - \Phi(\tau_{k,c-1} - \lambda_k \eta_n)
+\label{eq:ordered_probit}
+\end{equation}
+where $\lambda_k$ is the factor loading for indicator $k$, $\tau_{k,c}$ are threshold parameters (with $\tau_{k,0} = -\infty$ and $\tau_{k,C} = +\infty$), and $\Phi(\cdot)$ is the standard normal CDF.
+
+To ensure threshold ordering ($\tau_{k,1} < \tau_{k,2} < \cdots < \tau_{k,C-1}$), we employ a delta parameterization:
+\begin{align}
+\tau_{k,1} &= \delta_{k,1} \\
+\tau_{k,c} &= \tau_{k,c-1} + \exp(\delta_{k,c}), \quad c = 2, \ldots, C-1
+\label{eq:threshold_delta}
+\end{align}
+
+The exponential transformation guarantees positive increments regardless of the optimization path.
+
+%% ============================================================================
+%% SUBSECTION: Validation Philosophy
+%% ============================================================================
+\subsection{Validation Philosophy}
+\label{sec:validation}
+
+Our framework emphasizes rigorous validation through parameter recovery testing, which provides confidence in estimation procedures before application to empirical data.
+
+\subsubsection{Parameter Recovery Metrics}
+
+We assess estimation quality using several complementary metrics:
+
+\textbf{Bias}: The difference between estimated and true parameter values:
+\begin{equation}
+\text{Bias}_k = \hat{\theta}_k - \theta^*_k
+\label{eq:bias}
+\end{equation}
+
+\textbf{Percentage Bias}: Bias scaled by the true parameter magnitude:
+\begin{equation}
+\text{\% Bias}_k = 100 \times \frac{\hat{\theta}_k - \theta^*_k}{|\theta^*_k|}
+\label{eq:pct_bias}
+\end{equation}
+
+\textbf{Root Mean Square Error (RMSE)}: For repeated simulations:
+\begin{equation}
+\text{RMSE}_k = \sqrt{\frac{1}{S} \sum_{s=1}^{S} (\hat{\theta}_{k,s} - \theta^*_k)^2}
+\label{eq:rmse}
+\end{equation}
+
+\textbf{95\% CI Coverage}: The proportion of simulations in which the true parameter falls within the estimated 95\% confidence interval. For well-specified models, coverage should be approximately 95\%.
+
+\subsubsection{Validation Benchmarks}
+
+Based on extensive simulation studies, we establish the following benchmarks for acceptable parameter recovery:
+
+\begin{table}[htbp]
+\centering
+\caption{Parameter Recovery Benchmarks}
+\label{tab:benchmarks}
+\begin{tabular}{lcc}
+\toprule
+Metric & Acceptable & Target \\
+\midrule
+$|\text{\% Bias}|$ & $< 15\%$ & $< 10\%$ \\
+95\% CI Coverage & $90\%$--$97\%$ & $93\%$--$97\%$ \\
+$t$-statistic & $|t| > 1.96$ & $|t| > 2.58$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Models failing to meet these benchmarks are flagged for specification review before application to real data.
+
+\subsubsection{Model Fit Statistics}
+
+For model comparison and selection, we report standard fit statistics:
+
+\textbf{Log-Likelihood (LL)}: The maximized value of the log-likelihood function. Higher (less negative) values indicate better fit.
+
+\textbf{McFadden's Pseudo-$R^2$}:
+\begin{equation}
+\rho^2 = 1 - \frac{\mathcal{LL}(\hat{\boldsymbol{\theta}})}{\mathcal{LL}(\mathbf{0})}
+\label{eq:rho2}
+\end{equation}
+where $\mathcal{LL}(\mathbf{0})$ is the log-likelihood of the null model (equal choice probabilities). Values between 0.2 and 0.4 indicate good fit in discrete choice contexts.
+
+\textbf{Information Criteria}:
+\begin{align}
+\text{AIC} &= 2K - 2\mathcal{LL} \\
+\text{BIC} &= K \ln(N) - 2\mathcal{LL}
+\label{eq:ic}
+\end{align}
+where $K$ is the number of estimated parameters and $N$ is the sample size. Lower values indicate better fit, with BIC applying a stronger penalty for model complexity.
+
+\textbf{Likelihood Ratio Test}: For nested models, we test whether the additional parameters significantly improve fit:
+\begin{equation}
+\text{LR} = 2[\mathcal{LL}(\text{unrestricted}) - \mathcal{LL}(\text{restricted})] \sim \chi^2_{df}
+\label{eq:lr_test}
+\end{equation}
+where $df$ equals the difference in parameters between models.
+
+%% ============================================================================
+%% SUBSECTION: Policy Analysis Framework
+%% ============================================================================
+\subsection{Policy Analysis Framework}
+\label{sec:policy_framework}
+
+The estimated choice models support a comprehensive suite of policy analysis tools.
+
+\subsubsection{Willingness to Pay}
+
+Willingness to pay (WTP) measures the monetary value of attribute improvements:
+\begin{equation}
+\text{WTP}_k = -\frac{\beta_k}{\beta_{\text{price}}} \times \text{scale}
+\label{eq:wtp}
+\end{equation}
+where the scale factor converts to monetary units. Standard errors are computed via the delta method:
+\begin{equation}
+\text{Var}(\text{WTP}) \approx \nabla g(\boldsymbol{\theta})^\top \boldsymbol{\Sigma} \nabla g(\boldsymbol{\theta})
+\label{eq:delta_method}
+\end{equation}
+where $g(\boldsymbol{\theta})$ is the WTP function and $\boldsymbol{\Sigma}$ is the parameter covariance matrix.
+
+\subsubsection{Price Elasticities}
+
+Own-price elasticity measures demand responsiveness:
+\begin{equation}
+\varepsilon_{jj} = \frac{\partial P_j}{\partial x_j} \cdot \frac{x_j}{P_j} = \beta_x \cdot x_j \cdot (1 - P_j)
+\label{eq:own_elasticity}
+\end{equation}
+
+Cross-price elasticity captures substitution patterns:
+\begin{equation}
+\varepsilon_{jk} = \frac{\partial P_j}{\partial x_k} \cdot \frac{x_k}{P_j} = -\beta_x \cdot x_k \cdot P_k
+\label{eq:cross_elasticity}
+\end{equation}
+
+\subsubsection{Welfare Analysis}
+
+Consumer surplus changes from policy interventions are measured via compensating variation:
+\begin{equation}
+\text{CV} = -\frac{1}{\beta_{\text{price}}} \left[ \ln \sum_j \exp(V_j^{\text{new}}) - \ln \sum_j \exp(V_j^{\text{base}}) \right] \times \text{scale}
+\label{eq:cv}
+\end{equation}
+
+This measure captures the monetary equivalent of utility changes from policy scenarios.
+
+%% ============================================================================
+%% End of Methodological Framework Section
+%% ============================================================================

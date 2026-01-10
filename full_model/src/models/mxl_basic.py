@@ -27,7 +27,7 @@ cluster-robust SE or the full mxl_models.py file.
 Usage:
     python src/models/mxl_basic.py --data data/simulated/fresh_simulation.csv --draws 1000
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -52,6 +52,14 @@ try:
 except ImportError:
     from biogeme.expressions import bioDraws as Draws
     USE_NEW_DRAWS = False
+
+
+# =============================================================================
+# MODEL CONSTANTS
+# =============================================================================
+
+# Availability dict for alternatives (used in logit and null LL calculation)
+AV_DICT = {1: 1, 2: 1, 3: 1}  # All alternatives always available
 
 
 # =============================================================================
@@ -97,10 +105,9 @@ def create_mxl_basic(database: db.Database):
     V3 = B_FEE_RND * fee3 + B_DUR * dur3  # Reference alternative
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Conditional logit probability (conditional on random draw)
-    prob = models.logit(V, av, CHOICE)
+    prob = models.logit(V, AV_DICT, CHOICE)
 
     # Simulated log-likelihood (integrate over random draws)
     logprob = log(MonteCarlo(prob))
@@ -162,13 +169,21 @@ def estimate_mxl_basic(data_path: str,
     # Load and prepare data
     df = prepare_data(data_path)
     n_obs = len(df)
-    n_individuals = df['ID'].nunique() if 'ID' in df.columns else n_obs
+
+    # Validate panel structure exists (required for MXL with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "MXL requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_individuals = df['ID'].nunique()
 
     print(f"\nData: {n_obs} observations from {n_individuals} individuals")
     print(f"Simulation draws: {n_draws}")
 
-    # Create database (no panel for compatibility)
+    # Create database with panel structure for cluster-robust inference
     database = db.Database('mxl_basic', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws
 
     # Create model
     logprob, model_name = create_mxl_basic(database)
@@ -177,7 +192,7 @@ def estimate_mxl_basic(data_path: str,
     print("\nEstimating model (this may take a few minutes)...")
     biogeme_model = bio.BIOGEME(database, logprob, number_of_draws=n_draws)
     biogeme_model.model_name = model_name
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     results = biogeme_model.estimate()
 

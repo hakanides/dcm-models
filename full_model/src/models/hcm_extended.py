@@ -1,9 +1,20 @@
 """
-HCM Extended Models
-===================
+HCM Extended Models - TWO-STAGE APPROACH
+=========================================
+
+*** DEPRECATION WARNING ***
+This module uses a TWO-STAGE estimation approach which causes 15-50%
+ATTENUATION BIAS on latent variable effect estimates. This is NOT proper HCM.
+
+For unbiased estimates, use the simultaneous ICLV models in:
+  - models/hcm_basic/model.py (single LV)
+  - models/hcm_full/model.py (4 LVs)
+  - models/iclv/model.py
+
+STATUS: DEPRECATED - Use models/hcm_*/model.py instead
 
 Extended Hybrid Choice Model specifications with various latent variable
-configurations and interaction patterns.
+configurations and interaction patterns (TWO-STAGE - biased estimates).
 
 Model Specifications:
     M1: Single LV on fee (Blind Patriotism)
@@ -18,7 +29,7 @@ Model Specifications:
 Usage:
     python src/models/hcm_extended.py --data data/simulated/fresh_simulation.csv
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
@@ -31,6 +42,21 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+# RUNTIME DEPRECATION WARNING
+warnings.warn(
+    "\n" + "="*70 + "\n"
+    "DEPRECATION WARNING: hcm_extended.py uses TWO-STAGE estimation\n"
+    "which produces 15-50% ATTENUATION BIAS on latent variable effects.\n"
+    "\n"
+    "For unbiased estimates, use simultaneous ICLV models instead:\n"
+    "  - models/hcm_basic/model.py (single LV)\n"
+    "  - models/hcm_full/model.py (4 LVs)\n"
+    "  - models/iclv/model.py\n"
+    + "="*70,
+    DeprecationWarning,
+    stacklevel=2
+)
 
 warnings.filterwarnings('ignore')
 
@@ -419,12 +445,20 @@ def run_hcm_extended(data_path: str, output_dir: str = 'results/hcm_extended') -
     # Prepare data with LV estimation
     df, lv_stats = prepare_data(data_path)
     n_obs = len(df)
-    n_ind = df['ID'].nunique() if 'ID' in df.columns else n_obs
+
+    # Validate panel structure exists (required for HCM/ICLV with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "HCM/ICLV requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_ind = df['ID'].nunique()
 
     print(f"\nData: {n_obs} observations from {n_ind} individuals")
 
-    # Create database
+    # Create database with panel structure
     database = db.Database('hcm_extended', df)
+    database.panel('ID')  # Declare panel structure for consistent random draws
     null_ll = n_obs * np.log(1/3)
 
     # Model list
