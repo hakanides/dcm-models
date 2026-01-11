@@ -13,7 +13,7 @@ using an agent-based approach. Each agent represents a simulated respondent with
 The simulation follows a known Data Generating Process (DGP), allowing for
 validation of estimation methods by comparing estimated vs. true parameters.
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import json

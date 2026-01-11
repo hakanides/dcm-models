@@ -9,7 +9,7 @@ Components:
 - Compare two-stage vs ICLV estimation
 - Bias, RMSE, and coverage analysis
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 from .monte_carlo import (

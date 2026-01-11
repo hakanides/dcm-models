@@ -16,7 +16,7 @@ Usage:
     est_log.start()
     est_log.converged(ll=-1234.5, k=5, aic=2479.0)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import logging

@@ -6,8 +6,9 @@
     "true_values": {
       "ASC_paid": 5.0,
       "B_FEE": -0.08,
-      "B_DUR": -0.08
-    }
+      "B_DUR": -0.12
+    },
+    "_note": "B_FEE and B_DUR are intentionally different to detect estimation bias"
   },
   "population": {
     "N": 500,
@@ -15,7 +16,7 @@
     "seed": 42
   },
   "design": {
-    "path": "../../full_model/data/raw/scenarios_prepared.csv",
+    "path": "../shared/data/scenarios.csv",
     "sample_with_replacement": true
   },
   "demographics": {
@@ -61,7 +62,7 @@
         "name": "B_DUR",
         "attribute": "dur",
         "apply_to": ["paid1", "paid2", "standard"],
-        "base_coef": -0.08,
+        "base_coef": -0.12,
         "interactions": []
       }
     ]

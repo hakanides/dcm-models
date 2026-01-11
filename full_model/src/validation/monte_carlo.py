@@ -11,7 +11,7 @@ Key metrics:
 - Coverage: P(θ ∈ CI)
 - Relative efficiency
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -110,33 +110,88 @@ def compute_rmse(estimates: np.ndarray, true_value: float) -> float:
 def compute_coverage(estimates: np.ndarray,
                      std_errors: np.ndarray,
                      true_value: float,
-                     confidence: float = 0.95) -> float:
+                     confidence: float = 0.95,
+                     method: str = 'normal') -> float:
     """
     Compute confidence interval coverage rate.
 
-    Coverage = P(θ ∈ [θ̂ - z*SE, θ̂ + z*SE])
+    Coverage = P(θ ∈ [lower, upper])
 
     Args:
         estimates: Array of estimates
         std_errors: Array of standard errors
         true_value: True parameter value
         confidence: Confidence level (default 95%)
+        method: CI method - 'normal' (default) or 'percentile'
+                'normal': Uses z*SE intervals (assumes normality)
+                'percentile': Uses empirical percentiles (robust to skewness)
 
     Returns:
         Coverage rate (0 to 1)
+
+    Note:
+        For ratio-based statistics (e.g., WTP), use method='percentile'
+        as the sampling distribution may be skewed (Cauchy-like).
     """
     valid_mask = ~np.isnan(estimates) & ~np.isnan(std_errors) & (std_errors > 0)
 
     if valid_mask.sum() == 0:
         return np.nan
 
-    z = stats.norm.ppf((1 + confidence) / 2)
+    valid_estimates = estimates[valid_mask]
+    valid_std_errors = std_errors[valid_mask]
 
-    lower = estimates[valid_mask] - z * std_errors[valid_mask]
-    upper = estimates[valid_mask] + z * std_errors[valid_mask]
+    if method == 'percentile':
+        # Percentile-based coverage: check if true value falls within
+        # the empirical confidence interval of the sampling distribution
+        alpha = 1 - confidence
+        lower_pct = np.percentile(valid_estimates, alpha/2 * 100)
+        upper_pct = np.percentile(valid_estimates, (1 - alpha/2) * 100)
+        # For percentile method, we check if the true value is within
+        # the empirical distribution bounds
+        covered = (lower_pct <= true_value) & (true_value <= upper_pct)
+        return float(covered)
+    else:
+        # Normal-based coverage: z*SE intervals
+        z = stats.norm.ppf((1 + confidence) / 2)
+        lower = valid_estimates - z * valid_std_errors
+        upper = valid_estimates + z * valid_std_errors
+        covered = (lower <= true_value) & (true_value <= upper)
+        return covered.mean()
 
-    covered = (lower <= true_value) & (true_value <= upper)
-    return covered.mean()
+
+def compute_coverage_percentile(estimates: np.ndarray,
+                                true_value: float,
+                                confidence: float = 0.95) -> float:
+    """
+    Compute percentile-based coverage for skewed distributions.
+
+    Unlike compute_coverage(), this doesn't require standard errors.
+    It checks whether the true value falls within the empirical
+    confidence interval of the estimates distribution.
+
+    Recommended for:
+    - Ratio statistics (WTP = B_DUR / B_FEE)
+    - Any parameter with potentially skewed sampling distribution
+
+    Args:
+        estimates: Array of Monte Carlo estimates
+        true_value: True parameter value
+        confidence: Confidence level (default 95%)
+
+    Returns:
+        1.0 if true value is within empirical CI, 0.0 otherwise
+    """
+    valid_estimates = estimates[~np.isnan(estimates)]
+
+    if len(valid_estimates) < 10:
+        return np.nan
+
+    alpha = 1 - confidence
+    lower = np.percentile(valid_estimates, alpha/2 * 100)
+    upper = np.percentile(valid_estimates, (1 - alpha/2) * 100)
+
+    return 1.0 if (lower <= true_value <= upper) else 0.0
 
 
 class MonteCarloStudy:

@@ -8,7 +8,7 @@ Validates DCM data before model estimation to catch common issues:
 3. Extreme fee/attribute values (numerical issues)
 4. Missing values
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import pandas as pd

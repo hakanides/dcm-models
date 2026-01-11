@@ -11,7 +11,7 @@ Key Features:
 - Convergence quality metrics
 - LaTeX table generation
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -36,9 +36,16 @@ class ConvergenceDiagnostics:
     optimization_message: str = ""
 
     # Thresholds for publication-quality convergence
+    # References:
+    # - Greene (2018): Econometric Analysis, Ch. 14
+    # - Gill & King (2004): What to do when your Hessian is not invertible
     GRADIENT_THRESHOLD: float = 1e-5
-    CONDITION_THRESHOLD: float = 1e6
-    EIGENVALUE_THRESHOLD: float = 1e-6
+    # Condition number: 1e4 is conservative; 1e6 too permissive (allows near-singular)
+    # Most numerical analysts recommend < 1e4 for reliable inversion
+    CONDITION_THRESHOLD: float = 1e4
+    # Eigenvalue: 1e-4 catches near-zero eigenvalues that indicate identification issues
+    # 1e-6 is too permissive and may accept near-singular Hessians
+    EIGENVALUE_THRESHOLD: float = 1e-4
 
     @property
     def is_well_conditioned(self) -> bool:
@@ -100,15 +107,21 @@ class ConvergenceChecker:
 
     def __init__(self,
                  gradient_tol: float = 1e-5,
-                 condition_tol: float = 1e6,
-                 eigenvalue_tol: float = 1e-6):
+                 condition_tol: float = 1e4,
+                 eigenvalue_tol: float = 1e-4):
         """
         Initialize convergence checker.
 
         Args:
-            gradient_tol: Maximum acceptable gradient norm
-            condition_tol: Maximum acceptable condition number
-            eigenvalue_tol: Minimum acceptable eigenvalue
+            gradient_tol: Maximum acceptable gradient norm (default: 1e-5)
+            condition_tol: Maximum acceptable Hessian condition number (default: 1e4)
+                          Values > 1e4 indicate ill-conditioning; > 1e6 is near-singular
+            eigenvalue_tol: Minimum acceptable eigenvalue (default: 1e-4)
+                           Values < 1e-4 indicate identification issues
+
+        Note:
+            Default thresholds are conservative to ensure reliable standard errors.
+            For exploratory work, you may use looser thresholds (1e6, 1e-6).
         """
         self.gradient_tol = gradient_tol
         self.condition_tol = condition_tol
@@ -416,7 +429,7 @@ Model & Conv. & Iter. & $\|\nabla\|$ & Cond. \# & Min $\lambda$ & Status \\
 \small
 \item Note: Conv. = Converged; $\|\nabla\|$ = Gradient norm; Cond. \# = Condition number;
 \item Min $\lambda$ = Minimum eigenvalue; Status = Publication ready.
-\item Thresholds: $\|\nabla\| < 10^{-5}$, Cond. \# $< 10^6$, Min $\lambda > 10^{-6}$.
+\item Thresholds: $\|\nabla\| < 10^{-5}$, Cond. \# $< 10^4$, Min $\lambda > 10^{-4}$.
 \end{tablenotes}
 \end{table}
 """

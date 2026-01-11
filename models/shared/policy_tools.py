@@ -29,6 +29,237 @@ class EstimationResults:
     model_type: str = 'MNL'
 
 
+# ============================================================================
+# INPUT VALIDATION HELPERS
+# ============================================================================
+
+def validate_required_params(
+    results: EstimationResults,
+    required_params: List[str],
+    function_name: str = "function"
+) -> None:
+    """
+    Validate that required parameters exist in results.
+
+    Args:
+        results: Estimation results
+        required_params: List of required parameter names
+        function_name: Name of calling function for error messages
+
+    Raises:
+        ValueError: If any required parameter is missing
+    """
+    missing = [p for p in required_params if p not in results.betas]
+    if missing:
+        available = list(results.betas.keys())
+        raise ValueError(
+            f"{function_name}: Missing required parameters {missing}. "
+            f"Available: {available}"
+        )
+
+
+def validate_denominator(
+    value: float,
+    param_name: str,
+    min_abs_value: float = 1e-8,
+    warn_if_positive: bool = True
+) -> None:
+    """
+    Validate that a denominator (like B_FEE) is suitable for division.
+
+    Args:
+        value: Parameter value
+        param_name: Parameter name for error messages
+        min_abs_value: Minimum absolute value allowed
+        warn_if_positive: Whether to warn if value is positive (unusual for cost)
+
+    Raises:
+        ValueError: If value is essentially zero
+    """
+    if abs(value) < min_abs_value:
+        raise ValueError(
+            f"{param_name} is essentially zero ({value:.6e}). "
+            f"Cannot compute ratios reliably."
+        )
+
+    if warn_if_positive and value > 0:
+        print(f"  WARNING: {param_name} is positive ({value:.4f}), which is unusual for a cost coefficient.")
+        print(f"           Results may have unexpected signs.")
+
+
+def validate_data_columns(
+    df: pd.DataFrame,
+    required_columns: List[str],
+    function_name: str = "function"
+) -> None:
+    """
+    Validate that required columns exist in DataFrame.
+
+    Args:
+        df: DataFrame to check
+        required_columns: List of required column names
+        function_name: Name of calling function for error messages
+
+    Raises:
+        ValueError: If any required column is missing
+    """
+    missing = [c for c in required_columns if c not in df.columns]
+    if missing:
+        available = list(df.columns)
+        raise ValueError(
+            f"{function_name}: Missing required columns {missing}. "
+            f"Available: {available}"
+        )
+
+
+def validate_scenario_bounds(
+    scenario_changes: Dict[str, float],
+    df: pd.DataFrame,
+    allow_negative: bool = False
+) -> None:
+    """
+    Validate that scenario changes produce sensible attribute values.
+
+    Args:
+        scenario_changes: Dict of attribute changes
+        df: DataFrame with baseline values
+        allow_negative: Whether to allow negative final values
+
+    Raises:
+        ValueError: If changes would produce invalid values
+    """
+    for key, change in scenario_changes.items():
+        if key.startswith('fee'):
+            col = key
+            if col in df.columns:
+                baseline = df[col].mean()
+                new_value = baseline + change
+                if new_value < 0 and not allow_negative:
+                    raise ValueError(
+                        f"Scenario change '{key}: {change}' would produce negative fee "
+                        f"(baseline={baseline:.0f}, new={new_value:.0f}). "
+                        f"Use allow_negative=True to override."
+                    )
+
+
+def detect_n_alternatives(df: pd.DataFrame, config: Dict[str, Any] = None) -> int:
+    """
+    Detect the number of alternatives from data or config.
+
+    Checks for fee1, fee2, fee3, ... columns or uses config if provided.
+
+    Args:
+        df: DataFrame with attribute columns
+        config: Optional config dict with alternatives specification
+
+    Returns:
+        Number of alternatives (minimum 2)
+    """
+    # Try config first
+    if config is not None:
+        alts = config.get('choice_model', {}).get('alternatives', {})
+        if alts:
+            return len(alts)
+
+    # Count fee columns (fee1, fee2, fee3, ...)
+    n_alts = 0
+    for i in range(1, 20):  # Support up to 20 alternatives
+        if f'fee{i}' in df.columns:
+            n_alts = i
+        else:
+            break
+
+    return max(n_alts, 2)  # Minimum 2 alternatives
+
+
+def check_scenario_dominance(
+    df: pd.DataFrame,
+    config: Dict[str, Any] = None,
+    max_acceptable_pct: float = 10.0,
+    verbose: bool = True
+) -> Dict[str, Any]:
+    """
+    Check for dominated alternatives in choice scenarios.
+
+    A dominated alternative is one where another alternative is strictly better
+    (lower fee AND lower duration). This reduces effective sample size and
+    can bias estimation.
+
+    Args:
+        df: DataFrame with fee and duration columns
+        config: Optional config dict with alternatives specification
+        max_acceptable_pct: Maximum acceptable percentage of dominated scenarios
+        verbose: Whether to print warnings
+
+    Returns:
+        Dictionary with dominance analysis results
+    """
+    n_alts = detect_n_alternatives(df, config)
+    n_scenarios = len(df)
+
+    # Get fee and duration columns
+    fee_cols = [f'fee{i}' for i in range(1, n_alts + 1) if f'fee{i}' in df.columns]
+    dur_cols = [f'dur{i}' for i in range(1, n_alts + 1) if f'dur{i}' in df.columns]
+
+    if len(fee_cols) < 2 or len(dur_cols) < 2:
+        return {'error': 'Insufficient columns for dominance check'}
+
+    n_dominated = 0
+    dominated_rows = []
+
+    for idx in range(n_scenarios):
+        row_dominated = False
+
+        # Check each pair of alternatives
+        for i in range(n_alts):
+            for j in range(n_alts):
+                if i == j:
+                    continue
+
+                # Check if alt i dominates alt j (i is strictly better)
+                fee_i = df[fee_cols[i]].iloc[idx] if i < len(fee_cols) else 0
+                fee_j = df[fee_cols[j]].iloc[idx] if j < len(fee_cols) else 0
+                dur_i = df[dur_cols[i]].iloc[idx] if i < len(dur_cols) else 0
+                dur_j = df[dur_cols[j]].iloc[idx] if j < len(dur_cols) else 0
+
+                # Alternative i dominates j if: fee_i <= fee_j AND dur_i <= dur_j
+                # with at least one strict inequality
+                if (fee_i <= fee_j and dur_i <= dur_j and
+                    (fee_i < fee_j or dur_i < dur_j)):
+                    row_dominated = True
+                    break
+
+            if row_dominated:
+                break
+
+        if row_dominated:
+            n_dominated += 1
+            dominated_rows.append(idx)
+
+    dominance_pct = (n_dominated / n_scenarios) * 100
+
+    result = {
+        'n_scenarios': n_scenarios,
+        'n_dominated': n_dominated,
+        'dominance_pct': dominance_pct,
+        'dominated_indices': dominated_rows,
+        'is_acceptable': dominance_pct <= max_acceptable_pct
+    }
+
+    if verbose:
+        print(f"\nScenario Dominance Check:")
+        print(f"  Total scenarios: {n_scenarios}")
+        print(f"  Dominated scenarios: {n_dominated} ({dominance_pct:.1f}%)")
+        print(f"  Threshold: {max_acceptable_pct:.0f}%")
+
+        if dominance_pct > max_acceptable_pct:
+            print(f"\n  WARNING: Dominance rate ({dominance_pct:.1f}%) exceeds threshold ({max_acceptable_pct:.0f}%)!")
+            print(f"  High dominance reduces effective sample size and may bias estimation.")
+            print(f"  Consider regenerating scenarios with better experimental design.")
+
+    return result
+
+
 def extract_results(biogeme_results, model_type: str = 'MNL') -> EstimationResults:
     """
     Extract estimation results from Biogeme results object.
@@ -69,12 +300,20 @@ def extract_results(biogeme_results, model_type: str = 'MNL') -> EstimationResul
             std_errs = {k: 0.0 for k in betas.keys()}
 
     # Get covariance matrix if available
+    # Note: Biogeme 3.3.1 uses robust_variance_covariance_matrix
+    # Older versions use variance_covariance_matrix
+    cov = None
+    param_names = list(betas.keys())
     try:
-        cov = biogeme_results.variance_covariance_matrix
-        param_names = list(betas.keys())
+        # Try robust covariance first (Biogeme 3.3.1+)
+        if hasattr(biogeme_results, 'robust_variance_covariance_matrix'):
+            cov = biogeme_results.robust_variance_covariance_matrix
+        elif hasattr(biogeme_results, 'variance_covariance_matrix'):
+            cov = biogeme_results.variance_covariance_matrix
+        elif hasattr(biogeme_results, 'get_variance_covariance_matrix'):
+            cov = biogeme_results.get_variance_covariance_matrix()
     except Exception:
         cov = None
-        param_names = list(betas.keys())
 
     # Get general statistics
     try:
@@ -113,6 +352,13 @@ def compute_wtp(
 ) -> pd.DataFrame:
     """
     Compute Willingness to Pay using delta method.
+
+    WARNING: The delta method assumes the ratio estimator is approximately
+    normal, which is INCORRECT. The ratio of two normal variables follows
+    a Cauchy-like distribution with heavy tails. This can produce confidence
+    intervals with < 95% coverage (typically 80-90%).
+
+    For correct confidence intervals, use compute_wtp_fieller() instead.
 
     WTP = -β_numerator / β_denominator
 
@@ -201,9 +447,168 @@ def compute_wtp(
     return result_df
 
 
+def compute_wtp_fieller(
+    results: EstimationResults,
+    config: Dict[str, Any],
+    numerator_param: str = 'B_DUR',
+    denominator_param: str = 'B_FEE',
+    alpha: float = 0.05
+) -> pd.DataFrame:
+    """
+    Compute WTP confidence intervals using Fieller's method.
+
+    Fieller's method is the CORRECT approach for ratio estimators because
+    the ratio of two normal variables does NOT follow a normal distribution.
+    The delta method (used in compute_wtp) can produce CIs with < 95% coverage.
+
+    Fieller's theorem provides exact confidence intervals when:
+    - The denominator (cost coefficient) is significantly different from zero
+    - Both numerator and denominator are approximately normal
+
+    If the denominator is not significantly different from zero, the CI
+    may be unbounded (infinite), indicating WTP is not well-defined.
+
+    Args:
+        results: Estimation results (must include covariance matrix)
+        config: Model configuration
+        numerator_param: Parameter in numerator (e.g., B_DUR)
+        denominator_param: Parameter in denominator (e.g., B_FEE)
+        alpha: Significance level (default 0.05 for 95% CI)
+
+    Returns:
+        DataFrame with WTP point estimate and Fieller confidence intervals
+
+    References:
+        Fieller, E.C. (1954). "Some problems in interval estimation."
+        Journal of the Royal Statistical Society B, 16(2): 175-185.
+
+        Armstrong, P., Garrido, R., Ortúzar, J.D. (2001). "Confidence
+        intervals to bound the value of time." Transportation Research
+        Part E, 37: 143-161.
+    """
+    betas = results.betas
+    fee_scale = config.get('choice_model', {}).get('fee_scale', 10000.0)
+
+    # Validate parameters exist
+    if numerator_param not in betas or denominator_param not in betas:
+        available = list(betas.keys())
+        raise ValueError(
+            f"Parameters not found. Available: {available}. "
+            f"Requested: {numerator_param}, {denominator_param}"
+        )
+
+    # Get parameter values
+    beta_num = betas[numerator_param]
+    beta_den = betas[denominator_param]
+
+    # WTP point estimate (same as delta method)
+    wtp_point = -beta_num / beta_den * fee_scale
+
+    # Fieller requires covariance matrix
+    if results.cov_matrix is None or results.param_names is None:
+        # Fall back to delta method with warning
+        print("  WARNING: Covariance matrix not available, using delta method")
+        return compute_wtp(results, config, numerator_param, denominator_param)
+
+    try:
+        idx_num = results.param_names.index(numerator_param)
+        idx_den = results.param_names.index(denominator_param)
+    except ValueError:
+        print("  WARNING: Parameters not in covariance matrix, using delta method")
+        return compute_wtp(results, config, numerator_param, denominator_param)
+
+    var_num = results.cov_matrix[idx_num, idx_num]
+    var_den = results.cov_matrix[idx_den, idx_den]
+    cov_nd = results.cov_matrix[idx_num, idx_den]
+
+    # Critical value
+    z = stats.norm.ppf(1 - alpha / 2)
+    z2 = z ** 2
+
+    # Fieller's method: solve quadratic equation for CI bounds
+    # For θ = β_num / β_den, Fieller's theorem gives the inequality:
+    # (β_num - θβ_den)² ≤ z² * [var_num - 2θ*cov_nd + θ²*var_den]
+    #
+    # Rearranging to: a*θ² + b*θ + c ≤ 0
+    # a = β_den² - z²*var_den
+    # b = -2*(β_num*β_den - z²*cov_nd)  [NOTE: negative sign!]
+    # c = β_num² - z²*var_num
+    #
+    # If a > 0: denominator is significantly different from zero, CI is bounded
+    # If a <= 0: denominator not significant, CI may be infinite or inverted
+
+    a = beta_den ** 2 - z2 * var_den
+    b = -2 * (beta_num * beta_den - z2 * cov_nd)  # Fixed sign
+    c = beta_num ** 2 - z2 * var_num
+
+    discriminant = b ** 2 - 4 * a * c
+
+    # Check if CI is bounded
+    fieller_bounded = True
+    ci_lower = np.nan
+    ci_upper = np.nan
+
+    if a <= 0:
+        # Denominator not significantly different from zero
+        fieller_bounded = False
+        print(f"  WARNING: {denominator_param} not significantly different from zero")
+        print(f"           Fieller CI is unbounded - WTP not well-defined")
+        # Fall back to delta method CI but flag as unreliable
+        delta_result = compute_wtp(results, config, numerator_param, denominator_param)
+        delta_result['Method'] = 'Delta (Fieller unbounded)'
+        delta_result['Fieller_Bounded'] = False
+        return delta_result
+    elif discriminant < 0:
+        # No real roots - entire real line is the CI (very rare)
+        fieller_bounded = False
+        print(f"  WARNING: Fieller discriminant < 0, CI covers entire real line")
+    else:
+        # Bounded CI - compute roots
+        sqrt_disc = np.sqrt(discriminant)
+
+        # The two roots give the CI bounds
+        # For WTP = -β_num / β_den (negative sign), we need to adjust
+        theta1 = (-b - sqrt_disc) / (2 * a)
+        theta2 = (-b + sqrt_disc) / (2 * a)
+
+        # Scale by fee_scale and apply negative sign for WTP formula
+        ci_lower = -theta2 * fee_scale
+        ci_upper = -theta1 * fee_scale
+
+        # Ensure lower < upper
+        if ci_lower > ci_upper:
+            ci_lower, ci_upper = ci_upper, ci_lower
+
+    # Compute delta method SE for comparison
+    grad_num = -1 / beta_den * fee_scale
+    grad_den = beta_num / (beta_den ** 2) * fee_scale
+    wtp_var = (grad_num ** 2 * var_num +
+               grad_den ** 2 * var_den +
+               2 * grad_num * grad_den * cov_nd)
+    wtp_se_delta = np.sqrt(max(0, wtp_var))
+
+    # t-statistic based on delta method SE (for reference)
+    t_stat = wtp_point / wtp_se_delta if wtp_se_delta > 0 else np.nan
+
+    result_df = pd.DataFrame([{
+        'Attribute': numerator_param.replace('B_', '').lower(),
+        'WTP_TL': wtp_point,
+        'SE_Delta': wtp_se_delta,
+        't_stat': t_stat,
+        'CI_95_Lower': ci_lower,
+        'CI_95_Upper': ci_upper,
+        'Method': 'Fieller',
+        'Fieller_Bounded': fieller_bounded,
+        'Fee_Scale': fee_scale
+    }])
+
+    return result_df
+
+
 def compute_all_wtp(
     results: EstimationResults,
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    method: str = 'fieller'
 ) -> pd.DataFrame:
     """
     Compute WTP for all attributes relative to fee.
@@ -211,6 +616,7 @@ def compute_all_wtp(
     Args:
         results: Estimation results
         config: Model configuration
+        method: 'fieller' (recommended, correct CIs) or 'delta' (approximate)
 
     Returns:
         DataFrame with WTP for each attribute
@@ -225,12 +631,18 @@ def compute_all_wtp(
     else:
         return pd.DataFrame()
 
+    # Select WTP computation method
+    if method.lower() == 'fieller':
+        wtp_func = compute_wtp_fieller
+    else:
+        wtp_func = compute_wtp
+
     # Find all non-fee coefficients
     wtp_list = []
 
     # Duration WTP
     if 'B_DUR' in betas:
-        wtp_dur = compute_wtp(results, config, 'B_DUR', fee_param)
+        wtp_dur = wtp_func(results, config, 'B_DUR', fee_param)
         wtp_list.append(wtp_dur)
 
     # LV interaction effects (for HCM/ICLV)
@@ -238,7 +650,7 @@ def compute_all_wtp(
     for param in lv_params:
         try:
             # For interaction: WTP change per unit LV
-            wtp_lv = compute_wtp(results, config, param, fee_param)
+            wtp_lv = wtp_func(results, config, param, fee_param)
             wtp_lv['Attribute'] = param.replace('B_FEE_', '').lower() + '_effect'
             wtp_list.append(wtp_lv)
         except Exception:
@@ -254,8 +666,10 @@ def compute_all_wtp(
 # ============================================================================
 
 def compute_logit_probabilities(utilities: np.ndarray) -> np.ndarray:
-    """Compute multinomial logit probabilities."""
-    exp_u = np.exp(utilities - np.max(utilities))  # Numerical stability
+    """Compute multinomial logit probabilities with numerical stability."""
+    # Clip to prevent underflow: exp(-700) ≈ 0
+    diffs = np.clip(utilities - np.max(utilities), -700, 0)
+    exp_u = np.exp(diffs)
     return exp_u / np.sum(exp_u)
 
 
@@ -376,13 +790,25 @@ def compute_market_shares(
     betas = results.betas
     fee_scale = config.get('choice_model', {}).get('fee_scale', 10000.0)
 
+    # Detect number of alternatives dynamically
+    n_alts = detect_n_alternatives(df, config)
+
     # Get mean attribute values
-    fee_means = [df[f'fee{i+1}'].mean() / fee_scale for i in range(3)
+    fee_means = [df[f'fee{i+1}'].mean() / fee_scale for i in range(n_alts)
                  if f'fee{i+1}' in df.columns]
-    dur_means = [df[f'dur{i+1}'].mean() for i in range(3)
+    dur_means = [df[f'dur{i+1}'].mean() for i in range(n_alts)
                  if f'dur{i+1}' in df.columns]
 
-    n_alts = len(fee_means)
+    # Ensure we have values for all alternatives
+    while len(fee_means) < n_alts:
+        fee_means.append(0)
+    while len(dur_means) < n_alts:
+        dur_means.append(0)
+
+    # Determine which alternatives have ASC from config
+    alt_config = config.get('choice_model', {}).get('alternatives', {})
+    has_asc = [alt_config.get(str(i+1), {}).get('asc', i < n_alts - 1)
+               for i in range(n_alts)]
 
     # Compute utilities - handle MXL which uses B_FEE_MU instead of B_FEE
     asc = betas.get('ASC_paid', 0)
@@ -391,10 +817,9 @@ def compute_market_shares(
 
     utilities = np.zeros(n_alts)
     for j in range(n_alts):
-        if j < 2:  # Paid alternatives
-            utilities[j] = asc + b_fee * fee_means[j] + b_dur * dur_means[j]
-        else:  # Standard alternative
-            utilities[j] = b_dur * dur_means[j]
+        utilities[j] = b_fee * fee_means[j] + b_dur * dur_means[j]
+        if has_asc[j]:
+            utilities[j] += asc
 
     # Compute probabilities
     probs = compute_logit_probabilities(utilities)
@@ -584,7 +1009,7 @@ def compute_compensating_variation(
     df: pd.DataFrame,
     config: Dict[str, Any],
     scenario_changes: Dict[str, float] = None,
-    n_bootstrap: int = 1000
+    n_bootstrap: int = 5000
 ) -> pd.DataFrame:
     """
     Compute Compensating Variation (CV) for policy scenarios.
@@ -619,27 +1044,61 @@ def compute_compensating_variation(
     else:
         return pd.DataFrame()
 
+    # CRITICAL: Validate B_FEE is well-identified
+    # If B_FEE ≈ 0 or has wrong sign, CV becomes unreliable
+    if abs(b_fee) < 1e-8:
+        raise ValueError(
+            f"Cost coefficient (B_FEE) is essentially zero ({b_fee:.6f}). "
+            "Consumer surplus cannot be reliably computed."
+        )
+
+    if b_fee > 0:
+        print("  WARNING: Cost coefficient (B_FEE) is positive, which is unusual.")
+        print("           Welfare measures may have unexpected signs.")
+
+    # Check if B_FEE is statistically significant (t-stat > 1.96)
+    if se_fee > 0:
+        t_stat = abs(b_fee) / se_fee
+        if t_stat < 1.96:
+            print(f"  WARNING: Cost coefficient not significant (|t|={t_stat:.2f} < 1.96).")
+            print("           Consumer surplus estimates may be unreliable.")
+
     b_dur = betas.get('B_DUR', 0)
     asc = betas.get('ASC_paid', 0)
 
+    # Detect number of alternatives dynamically
+    n_alts = detect_n_alternatives(df, config)
+
     # Get mean attribute values
-    fee_means = [df[f'fee{i+1}'].mean() for i in range(3) if f'fee{i+1}' in df.columns]
-    dur_means = [df[f'dur{i+1}'].mean() for i in range(3) if f'dur{i+1}' in df.columns]
-    n_alts = len(fee_means)
+    fee_means = [df[f'fee{i+1}'].mean() for i in range(n_alts) if f'fee{i+1}' in df.columns]
+    dur_means = [df[f'dur{i+1}'].mean() for i in range(n_alts) if f'dur{i+1}' in df.columns]
+
+    # Ensure we have values for all alternatives
+    while len(fee_means) < n_alts:
+        fee_means.append(0)
+    while len(dur_means) < n_alts:
+        dur_means.append(0)
+
+    # Determine which alternatives have ASC from config
+    alt_config = config.get('choice_model', {}).get('alternatives', {})
+    has_asc = [alt_config.get(str(i+1), {}).get('asc', i < n_alts - 1)
+               for i in range(n_alts)]
 
     # Default scenario: 10% fee reduction on Alt 1
     if scenario_changes is None:
         scenario_changes = {'fee1': -fee_means[0] * 0.10}
 
     def compute_logsum(fee_vals, dur_vals, b_fee_val):
-        """Compute log-sum (expected max utility)."""
+        """Compute log-sum (expected max utility) with numerical stability."""
         utilities = np.zeros(n_alts)
         for j in range(n_alts):
-            if j < 2:  # Paid alternatives
-                utilities[j] = asc + b_fee_val * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
-            else:
-                utilities[j] = b_dur * dur_vals[j]
-        return np.log(np.sum(np.exp(utilities - np.max(utilities)))) + np.max(utilities)
+            utilities[j] = b_fee_val * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
+            if has_asc[j]:
+                utilities[j] += asc
+        # Numerical stability: clip differences to prevent underflow
+        max_u = np.max(utilities)
+        diffs = np.clip(utilities - max_u, -700, 0)  # exp(-700) ≈ 0
+        return np.log(np.sum(np.exp(diffs))) + max_u
 
     # Baseline log-sum
     logsum_base = compute_logsum(fee_means, dur_means, b_fee)
@@ -666,13 +1125,30 @@ def compute_compensating_variation(
     # Negative CV = consumer loses (needs this much compensation)
     cv_point = -(logsum_new - logsum_base) / b_fee * fee_scale
 
-    # Bootstrap for SE estimation
+    # Bootstrap for SE estimation using multivariate normal with covariance
     rng = np.random.default_rng(42)
     cv_bootstrap = []
 
+    # Try to use full covariance matrix for correlated draws
+    use_mvn = False
+    fee_param = 'B_FEE' if 'B_FEE' in betas else 'B_FEE_MU'
+
+    if results.cov_matrix is not None and results.param_names is not None:
+        try:
+            idx_fee = results.param_names.index(fee_param)
+            # For CV, we only need fee coefficient uncertainty
+            var_fee = results.cov_matrix[idx_fee, idx_fee]
+            if var_fee > 0:
+                se_fee_cov = np.sqrt(var_fee)
+                use_mvn = True
+        except (ValueError, IndexError):
+            pass
+
+    actual_se = se_fee_cov if use_mvn else abs(se_fee)
+
     for _ in range(n_bootstrap):
         # Sample coefficient with noise
-        b_fee_boot = rng.normal(b_fee, abs(se_fee))
+        b_fee_boot = rng.normal(b_fee, actual_se)
         if b_fee_boot >= 0:  # Skip invalid samples (fee coef must be negative)
             continue
 
@@ -816,6 +1292,18 @@ def compute_wtp_distribution(
     pct_positive_fee = (b_fee_draws >= 0).mean() * 100  # % with wrong sign
     pct_valid = valid_mask.mean() * 100
 
+    # CRITICAL: Warn about invalid draws - indicates model misspecification
+    if pct_positive_fee > 20:
+        raise ValueError(
+            f"MXL WTP Error: {pct_positive_fee:.1f}% of draws have positive B_FEE "
+            f"(wrong sign). This indicates severe model misspecification. "
+            f"Consider constraining B_FEE to be negative (e.g., lognormal distribution)."
+        )
+    elif pct_positive_fee > 5:
+        print(f"\n  WARNING: MXL WTP - {pct_positive_fee:.1f}% of draws have positive B_FEE (wrong sign).")
+        print(f"           This may indicate model misspecification or high heterogeneity.")
+        print(f"           Consider using a constrained distribution (e.g., -exp(B_FEE)).")
+
     # Percentiles
     percentiles = [5, 10, 25, 50, 75, 90, 95]
     pct_values = np.percentile(wtp_trimmed, percentiles) if len(wtp_trimmed) > 0 else [np.nan] * len(percentiles)
@@ -892,22 +1380,23 @@ def compute_elasticity_with_se(
     df: pd.DataFrame,
     config: Dict[str, Any],
     attribute: str = 'fee',
-    n_bootstrap: int = 1000
+    n_bootstrap: int = 5000
 ) -> pd.DataFrame:
     """
-    Compute elasticity matrix with standard errors using delta method and bootstrap.
+    Compute elasticity matrix with standard errors using bootstrap.
 
     Own-price elasticity: η_jj = β × x_j × (1 - P_j)
     Cross-price elasticity: η_jk = -β × x_k × P_k
 
-    SE computed via bootstrap over parameter uncertainty.
+    SE computed via parametric bootstrap over parameter uncertainty.
+    Uses multivariate normal with full covariance matrix when available.
 
     Args:
         results: Estimation results
         df: Data with attribute values
         config: Model configuration
         attribute: Attribute for elasticity ('fee' or 'dur')
-        n_bootstrap: Number of bootstrap samples
+        n_bootstrap: Number of bootstrap samples (default 5000)
 
     Returns:
         DataFrame with elasticity estimates and standard errors
@@ -971,15 +1460,50 @@ def compute_elasticity_with_se(
     # Point estimates
     elast_point, probs_point = compute_elasticities_for_coef(coef, asc)
 
-    # Bootstrap for SEs
+    # Bootstrap for SEs using multivariate normal with covariance
     rng = np.random.default_rng(42)
     elast_bootstrap = np.zeros((n_bootstrap, n_alts, n_alts))
 
-    for b in range(n_bootstrap):
-        coef_boot = rng.normal(coef, abs(coef_se))
-        asc_boot = rng.normal(asc, abs(asc_se))
-        elast_boot, _ = compute_elasticities_for_coef(coef_boot, asc_boot)
-        elast_bootstrap[b] = elast_boot
+    # Try to use full covariance matrix for correlated draws
+    use_mvn = False
+    if results.cov_matrix is not None and results.param_names is not None:
+        try:
+            # Get indices for coef and ASC in covariance matrix
+            idx_coef = results.param_names.index(coef_name)
+            idx_asc = results.param_names.index('ASC_paid') if 'ASC_paid' in results.param_names else None
+
+            if idx_asc is not None:
+                # Build 2x2 covariance submatrix for [coef, asc]
+                cov_sub = np.array([
+                    [results.cov_matrix[idx_coef, idx_coef], results.cov_matrix[idx_coef, idx_asc]],
+                    [results.cov_matrix[idx_asc, idx_coef], results.cov_matrix[idx_asc, idx_asc]]
+                ])
+                # Scale coef covariance by fee_scale if needed
+                if attribute == 'fee':
+                    cov_sub[0, :] /= fee_scale
+                    cov_sub[:, 0] /= fee_scale
+
+                mean_vec = [coef, asc]
+                # Check positive semi-definite
+                if np.all(np.linalg.eigvalsh(cov_sub) >= -1e-10):
+                    use_mvn = True
+        except (ValueError, IndexError):
+            pass
+
+    if use_mvn:
+        # Draw from multivariate normal with full covariance
+        draws = rng.multivariate_normal(mean_vec, cov_sub, n_bootstrap)
+        for b in range(n_bootstrap):
+            coef_boot, asc_boot = draws[b]
+            elast_boot, _ = compute_elasticities_for_coef(coef_boot, asc_boot)
+            elast_bootstrap[b] = elast_boot
+    else:
+        # Fall back to independent draws (underestimates SE)
+        for b in range(n_bootstrap):
+            coef_boot = rng.normal(coef, abs(coef_se))
+            asc_boot = rng.normal(asc, abs(asc_se))
+            elast_boot, _ = compute_elasticities_for_coef(coef_boot, asc_boot)
+            elast_bootstrap[b] = elast_boot
 
     # Compute SEs
     elast_se = np.std(elast_bootstrap, axis=0)
@@ -1015,7 +1539,7 @@ def compute_aggregate_elasticities(
     results: EstimationResults,
     df: pd.DataFrame,
     config: Dict[str, Any],
-    n_bootstrap: int = 1000
+    n_bootstrap: int = 5000
 ) -> pd.DataFrame:
     """
     Compute aggregate (market-level) elasticities with SEs.
@@ -1092,10 +1616,23 @@ def compute_scenario_analysis(
     betas = results.betas
     fee_scale = config.get('choice_model', {}).get('fee_scale', 10000.0)
 
+    # Detect number of alternatives dynamically
+    n_alts = detect_n_alternatives(df, config)
+
     # Get baseline values
-    fee_means = [df[f'fee{i+1}'].mean() for i in range(3) if f'fee{i+1}' in df.columns]
-    dur_means = [df[f'dur{i+1}'].mean() for i in range(3) if f'dur{i+1}' in df.columns]
-    n_alts = len(fee_means)
+    fee_means = [df[f'fee{i+1}'].mean() for i in range(n_alts) if f'fee{i+1}' in df.columns]
+    dur_means = [df[f'dur{i+1}'].mean() for i in range(n_alts) if f'dur{i+1}' in df.columns]
+
+    # Ensure we have values for all alternatives
+    while len(fee_means) < n_alts:
+        fee_means.append(0)
+    while len(dur_means) < n_alts:
+        dur_means.append(0)
+
+    # Determine which alternatives have ASC from config
+    alt_config = config.get('choice_model', {}).get('alternatives', {})
+    has_asc = [alt_config.get(str(i+1), {}).get('asc', i < n_alts - 1)
+               for i in range(n_alts)]
 
     # Get coefficients - handle MXL
     asc = betas.get('ASC_paid', 0)
@@ -1106,25 +1643,33 @@ def compute_scenario_analysis(
         """Compute market shares for given attribute values."""
         utilities = np.zeros(n_alts)
         for j in range(n_alts):
-            if j < 2:  # Paid alternatives
-                utilities[j] = asc + b_fee * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
-            else:
-                utilities[j] = b_dur * dur_vals[j]
+            utilities[j] = b_fee * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
+            if has_asc[j]:
+                utilities[j] += asc
 
-        exp_u = np.exp(utilities - np.max(utilities))
+        diffs = np.clip(utilities - np.max(utilities), -700, 0)
+        exp_u = np.exp(diffs)
         return exp_u / np.sum(exp_u)
 
-    # Default scenarios if none provided
+    # Default scenarios if none provided - dynamically build based on n_alts
     if scenarios is None:
-        scenarios = [
-            {'name': 'Baseline', 'changes': {}},
-            {'name': 'Alt1: -10% Fee', 'changes': {'fee1': -fee_means[0] * 0.10}},
-            {'name': 'Alt1: -20% Fee', 'changes': {'fee1': -fee_means[0] * 0.20}},
-            {'name': 'Alt1: -5 Days', 'changes': {'dur1': -5}},
-            {'name': 'Alt1: -10% Fee, -5 Days', 'changes': {'fee1': -fee_means[0] * 0.10, 'dur1': -5}},
-            {'name': 'Alt2: -10% Fee', 'changes': {'fee2': -fee_means[1] * 0.10}},
-            {'name': 'All: -10% Fee', 'changes': {'fee1': -fee_means[0] * 0.10, 'fee2': -fee_means[1] * 0.10}},
-        ]
+        scenarios = [{'name': 'Baseline', 'changes': {}}]
+        # Add fee reduction scenarios for first alternative
+        if len(fee_means) > 0:
+            scenarios.extend([
+                {'name': 'Alt1: -10% Fee', 'changes': {'fee1': -fee_means[0] * 0.10}},
+                {'name': 'Alt1: -20% Fee', 'changes': {'fee1': -fee_means[0] * 0.20}},
+            ])
+        scenarios.append({'name': 'Alt1: -5 Days', 'changes': {'dur1': -5}})
+        if len(fee_means) > 0:
+            scenarios.append({'name': 'Alt1: -10% Fee, -5 Days',
+                             'changes': {'fee1': -fee_means[0] * 0.10, 'dur1': -5}})
+        # Add scenarios for other alternatives if they exist
+        if n_alts > 1 and len(fee_means) > 1:
+            scenarios.append({'name': 'Alt2: -10% Fee', 'changes': {'fee2': -fee_means[1] * 0.10}})
+        if n_alts > 1 and len(fee_means) > 1:
+            all_fee_changes = {f'fee{i+1}': -fee_means[i] * 0.10 for i in range(min(n_alts, len(fee_means)))}
+            scenarios.append({'name': 'All: -10% Fee', 'changes': all_fee_changes})
 
     rows = []
 
@@ -1192,10 +1737,23 @@ def compute_sensitivity_analysis(
     betas = results.betas
     fee_scale = config.get('choice_model', {}).get('fee_scale', 10000.0)
 
+    # Detect number of alternatives dynamically
+    n_alts = detect_n_alternatives(df, config)
+
     # Get baseline values
-    fee_means = [df[f'fee{i+1}'].mean() for i in range(3) if f'fee{i+1}' in df.columns]
-    dur_means = [df[f'dur{i+1}'].mean() for i in range(3) if f'dur{i+1}' in df.columns]
-    n_alts = len(fee_means)
+    fee_means = [df[f'fee{i+1}'].mean() for i in range(n_alts) if f'fee{i+1}' in df.columns]
+    dur_means = [df[f'dur{i+1}'].mean() for i in range(n_alts) if f'dur{i+1}' in df.columns]
+
+    # Ensure we have values for all alternatives
+    while len(fee_means) < n_alts:
+        fee_means.append(0)
+    while len(dur_means) < n_alts:
+        dur_means.append(0)
+
+    # Determine which alternatives have ASC from config
+    alt_config = config.get('choice_model', {}).get('alternatives', {})
+    has_asc = [alt_config.get(str(i+1), {}).get('asc', i < n_alts - 1)
+               for i in range(n_alts)]
 
     # Get coefficients
     asc = betas.get('ASC_paid', 0)
@@ -1208,11 +1766,11 @@ def compute_sensitivity_analysis(
     def compute_shares(fee_vals, dur_vals):
         utilities = np.zeros(n_alts)
         for j in range(n_alts):
-            if j < 2:
-                utilities[j] = asc + b_fee * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
-            else:
-                utilities[j] = b_dur * dur_vals[j]
-        exp_u = np.exp(utilities - np.max(utilities))
+            utilities[j] = b_fee * fee_vals[j] / fee_scale + b_dur * dur_vals[j]
+            if has_asc[j]:
+                utilities[j] += asc
+        diffs = np.clip(utilities - np.max(utilities), -700, 0)
+        exp_u = np.exp(diffs)
         return exp_u / np.sum(exp_u)
 
     alt_idx = alternative - 1

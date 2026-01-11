@@ -7,7 +7,7 @@
       "ASC_paid": 5.0,
       "B_FEE_MU": -0.08,
       "B_FEE_SIGMA": 0.03,
-      "B_DUR": -0.08
+      "B_DUR": -0.12
     }
   },
   "population": {
@@ -16,7 +16,7 @@
     "seed": 42
   },
   "design": {
-    "path": "../../full_model/data/raw/scenarios_prepared.csv",
+    "path": "../shared/data/scenarios.csv",
     "sample_with_replacement": true
   },
   "demographics": {
@@ -60,7 +60,7 @@
         "name": "B_DUR",
         "attribute": "dur",
         "apply_to": ["paid1", "paid2", "standard"],
-        "base_coef": -0.08,
+        "base_coef": -0.12,
         "random": false,
         "interactions": []
       }

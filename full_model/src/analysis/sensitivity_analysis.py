@@ -16,7 +16,7 @@ Usage:
     )
     analyzer.plot_results(results)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

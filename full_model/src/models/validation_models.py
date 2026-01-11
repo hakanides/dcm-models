@@ -19,7 +19,7 @@ Usage:
     if 'LV_pat_blind_true' in df.columns:
         results = validate_latent_estimation(df)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

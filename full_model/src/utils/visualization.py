@@ -10,7 +10,7 @@ Includes:
 - Monte Carlo convergence plots
 - Model comparison plots
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

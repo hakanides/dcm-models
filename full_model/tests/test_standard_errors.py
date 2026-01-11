@@ -14,7 +14,7 @@ Validation approaches:
 2. Sandwich estimator checks
 3. Clustering validation
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import pytest

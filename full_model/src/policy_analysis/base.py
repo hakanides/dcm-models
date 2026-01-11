@@ -9,7 +9,7 @@ Classes:
 - PolicyScenario: Defines attribute levels for policy scenarios
 - PolicyAnalysisConfig: Configuration parameters
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -52,8 +52,46 @@ class PolicyAnalysisConfig:
     dur_std_param: str = 'B_DUR_SIGMA'
 
     # Alternative configuration
+    # NOTE: reference_alternative is 0-indexed
+    # For 3-alternative model: 0=Alt1, 1=Alt2, 2=Alt3 (typically free/standard)
+    # This should match the model specification where ASC=0 for reference
     n_alternatives: int = 3
-    reference_alternative: int = 2  # 0-indexed, alt 3 is reference
+    reference_alternative: int = 2  # 0-indexed, alt 3 is reference (no ASC)
+
+    @classmethod
+    def from_config_json(cls, config_path: str) -> 'PolicyAnalysisConfig':
+        """
+        Load configuration from a model's config.json file.
+
+        This ensures policy analysis uses the same configuration
+        as the estimation model (fee_scale, reference alternative, etc.).
+
+        Args:
+            config_path: Path to config.json
+
+        Returns:
+            PolicyAnalysisConfig instance
+        """
+        import json
+        from pathlib import Path
+
+        with open(Path(config_path)) as f:
+            config = json.load(f)
+
+        choice_cfg = config.get('choice_model', {})
+        alts_cfg = choice_cfg.get('alternatives', {})
+
+        # Find reference alternative (the one with asc=false)
+        ref_alt = 2  # default
+        for alt_key, alt_val in alts_cfg.items():
+            if not alt_val.get('asc', True):
+                ref_alt = int(alt_key) - 1  # Convert to 0-indexed
+
+        return cls(
+            fee_scale=choice_cfg.get('fee_scale', 10000.0),
+            n_alternatives=len(alts_cfg) if alts_cfg else 3,
+            reference_alternative=ref_alt
+        )
 
     @property
     def z_score(self) -> float:
@@ -106,11 +144,26 @@ class EstimationResult:
             model_type=result_dict.get('model_type', 'mnl')
         )
 
-    def get_covariance(self, params: List[str]) -> np.ndarray:
+    def get_covariance(self, params: List[str],
+                        warn_on_diagonal: bool = True) -> np.ndarray:
         """
         Extract covariance submatrix for specified parameters.
 
         If full covariance not available, builds diagonal matrix from std_errs.
+        This assumes zero parameter correlations, which typically
+        UNDERSTATES standard errors for derived quantities like WTP.
+
+        Args:
+            params: List of parameter names
+            warn_on_diagonal: If True (default), warn when falling back to diagonal
+
+        Returns:
+            Covariance submatrix
+
+        Note:
+            For accurate policy analysis (WTP, elasticities), the full
+            covariance matrix should be extracted from Biogeme results:
+                result.getVarCovar()  # or result.varCovar in newer versions
         """
         n = len(params)
 
@@ -121,13 +174,33 @@ class EstimationResult:
                 if p in self.param_names:
                     indices.append(self.param_names.index(p))
                 else:
-                    return self._diagonal_covariance(params)
+                    return self._diagonal_covariance(params, warn_on_diagonal)
             return self.covariance_matrix[np.ix_(indices, indices)]
         else:
-            return self._diagonal_covariance(params)
+            return self._diagonal_covariance(params, warn_on_diagonal)
 
-    def _diagonal_covariance(self, params: List[str]) -> np.ndarray:
-        """Build diagonal covariance from standard errors."""
+    def _diagonal_covariance(self, params: List[str],
+                             warn: bool = True) -> np.ndarray:
+        """
+        Build diagonal covariance from standard errors.
+
+        WARNING: Assumes zero parameter correlations. This typically
+        UNDERSTATES standard errors for ratios/derived quantities because:
+        - Numerator and denominator are often negatively correlated
+        - Ignoring this correlation inflates variance estimates for WTP
+
+        For accurate SEs, provide full covariance matrix from estimation.
+        """
+        import warnings
+        if warn:
+            warnings.warn(
+                "Full covariance matrix not available. Using diagonal matrix "
+                "(zero correlations). Standard errors for derived quantities "
+                "(WTP, elasticities) may be UNDERSTATED. For accurate SEs, "
+                "extract full covariance from Biogeme: result.getVarCovar()",
+                UserWarning
+            )
+
         n = len(params)
         cov = np.zeros((n, n))
         for i, p in enumerate(params):

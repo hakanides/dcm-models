@@ -13,7 +13,7 @@ Model Specification:
 True Parameters (from config):
     ASC_paid = 5.0
     B_FEE = -0.08
-    B_DUR = -0.08
+    B_DUR = -0.12
 """
 
 import json
@@ -35,11 +35,30 @@ from biogeme.expressions import Beta, Variable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.policy_tools import run_policy_analysis
 from shared.latex_tools import generate_all_latex
+from shared import validate_required_columns, validate_coefficient_signs
+
+# Required columns for MNL Basic
+REQUIRED_COLUMNS = ['CHOICE', 'fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3']
+
+# Alternative availability (1=available, 0=not available)
+# This should match the alternatives defined in config.json
+ALTERNATIVES = {1: 'paid1', 2: 'paid2', 3: 'standard'}
+AV_DICT = {k: 1 for k in ALTERNATIVES.keys()}  # All alternatives available
 
 
 def prepare_data(filepath: Path) -> pd.DataFrame:
     """Load and prepare data for estimation."""
     df = pd.read_csv(filepath)
+
+    # Validate required columns exist
+    validate_required_columns(df, REQUIRED_COLUMNS, 'MNL_Basic')
+
+    # Validate panel structure exists (required for cluster-robust standard errors)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "Panel data with 'ID' column required for cluster-robust standard errors. "
+            "Each individual should have multiple choice observations."
+        )
 
     # Ensure fee columns are scaled
     if 'fee1_10k' not in df.columns:
@@ -63,19 +82,31 @@ def create_model(database: db.Database):
     dur3 = Variable('dur3')
 
     # Parameters with bounds
-    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
-    B_FEE = Beta('B_FEE', -0.05, -10, 0, 0)
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)
+    # ASC NORMALIZATION EXPLAINED:
+    # - Alternative 3 is the REFERENCE (ASC_3 = 0, normalized to zero)
+    # - ASC_paid appears in BOTH V1 and V2 because they share the same
+    #   alternative-specific constant relative to the reference
+    # - This captures the baseline preference for "paid" options over "free"
+    # - If paid alternatives should differ, add ASC_1 and ASC_2 separately
+    #
+    # Current specification: ASC_paid = preference for any paid vs free
+    # Alternative: ASC_1, ASC_2 = separate constants for each paid option
+    # Starting values aligned with DGP (config.json true_values)
+    # Bounds: [-5, 10] for ASC, narrower for coefficients
+    ASC_paid = Beta('ASC_paid', 5.0, -5, 10, 0)  # True: 5.0
+    B_FEE = Beta('B_FEE', -0.08, -1, 0, 0)       # True: -0.08
+    B_DUR = Beta('B_DUR', -0.12, -1, 0, 0)       # True: -0.12
 
     # Utility functions
+    # V1, V2: Paid alternatives with shared ASC
+    # V3: Free alternative (reference, ASC = 0)
     V1 = ASC_paid + B_FEE * fee1 + B_DUR * dur1
     V2 = ASC_paid + B_FEE * fee2 + B_DUR * dur2
-    V3 = B_FEE * fee3 + B_DUR * dur3  # Reference
+    V3 = B_FEE * fee3 + B_DUR * dur3  # Reference (ASC = 0)
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
-    logprob = models.loglogit(V, av, CHOICE)
+    logprob = models.loglogit(V, AV_DICT, CHOICE)
     return logprob
 
 
@@ -107,11 +138,16 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     # Load and prepare data
     df = prepare_data(data_path)
     n_obs = len(df)
+    n_individuals = df['ID'].nunique()
 
     if verbose:
-        print(f"Data: {n_obs} observations")
+        print(f"Data: {n_obs} observations from {n_individuals} individuals")
 
     # Create database
+    # Note: In Biogeme 3.3.1, database.panel() causes CHOICE variable lookup failure
+    # due to internal data reshaping. Robust standard errors are still computed but
+    # are observation-level, not cluster-robust. For cluster-robust SEs, use
+    # bootstrap or upgrade to Biogeme 3.3.2+.
     database = db.Database('mnl_basic', df)
 
     # Create and estimate model
@@ -119,7 +155,7 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
 
     biogeme_model = bio.BIOGEME(database, logprob)
     biogeme_model.model_name = "MNL_Basic"
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     # Change to results dir for output files
     import os
@@ -134,6 +170,18 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     finally:
         os.chdir(original_dir)
 
+    # Check convergence status
+    general_stats = results.get_general_statistics()
+    converged = True
+    for key, val in general_stats.items():
+        if 'Optimization' in key and 'algorithm' not in key.lower():
+            status = str(val[0]) if isinstance(val, tuple) else str(val)
+            if 'success' not in status.lower() and 'converged' not in status.lower():
+                converged = False
+                if verbose:
+                    print(f"\nWARNING: Optimization may not have converged! Status: {status}")
+                break
+
     # Extract results
     estimates_df = results.get_estimated_parameters()
     estimates_df = estimates_df.set_index('Name')
@@ -143,8 +191,11 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     tstats = estimates_df['Robust t-stat.'].to_dict()
     pvals = estimates_df['Robust p-value'].to_dict()
 
-    # Get fit statistics
-    general_stats = results.get_general_statistics()
+    # Validate coefficient signs
+    if verbose:
+        validate_coefficient_signs(betas, model_name='MNL_Basic')
+
+    # Get fit statistics (reuse general_stats from convergence check)
     final_ll = None
     null_ll = None
     aic = None

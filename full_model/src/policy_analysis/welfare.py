@@ -24,7 +24,7 @@ This PROPERLY propagates uncertainty in λ through the welfare calculations.
 Welfare Change (CV):
     CV = CS_policy - CS_baseline
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -145,11 +145,27 @@ class WelfareAnalyzer:
         Compute logsum for a scenario.
 
         Logsum = ln(Σ exp(V_j))
+
+        Uses numerically stable computation to avoid overflow/underflow.
         """
         utilities = compute_utilities(scenario, self.result, self.config)
-        # Use max subtraction for numerical stability
+
+        # Numerically stable logsum computation
+        # Step 1: Subtract max to prevent overflow in exp()
         max_u = np.max(utilities)
-        logsum = max_u + np.log(np.sum(np.exp(utilities - max_u)))
+
+        # Step 2: Clip differences to prevent underflow (exp(-700) ≈ 0)
+        # Values below -700 are effectively zero in double precision
+        diffs = np.clip(utilities - max_u, -700, 0)
+
+        # Step 3: Compute sum of exponentials and log
+        sum_exp = np.sum(np.exp(diffs))
+
+        if sum_exp <= 0:
+            # This should never happen with clipping, but guard against it
+            raise ValueError("Numerical error in logsum: sum of exp is non-positive")
+
+        logsum = max_u + np.log(sum_exp)
         return logsum
 
     def _get_marginal_utility_income(self) -> float:
@@ -183,8 +199,13 @@ class WelfareAnalyzer:
         logsum = self._compute_logsum(scenario)
         lambda_income = self._get_marginal_utility_income()
 
-        if lambda_income == 0:
-            raise ValueError("Marginal utility of income (λ) is zero")
+        # Check for near-zero marginal utility of income (would produce unreliable CS)
+        if abs(lambda_income) < 1e-8:
+            raise ValueError(
+                f"Marginal utility of income (λ) is too close to zero: {lambda_income:.2e}. "
+                f"This produces unreliable consumer surplus estimates. "
+                f"Check that {self.config.fee_param} is significantly different from zero."
+            )
 
         cs = logsum / lambda_income
 

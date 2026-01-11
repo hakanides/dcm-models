@@ -18,7 +18,7 @@ Where:
     - τ_j = threshold parameters
     - Φ = standard normal CDF
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

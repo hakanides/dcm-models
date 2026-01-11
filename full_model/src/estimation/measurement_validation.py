@@ -17,7 +17,7 @@ References:
 - Hair, J.F. et al. (2019). Multivariate Data Analysis (8th ed.)
 - Fornell, C. & Larcker, D.F. (1981). Evaluating SEM with unobserved variables
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -73,7 +73,9 @@ class MeasurementValidationResult:
     construct_metrics: Dict[str, ConstructMetrics]
     correlation_matrix: pd.DataFrame
     fornell_larcker_matrix: pd.DataFrame
+    htmt_matrix: pd.DataFrame  # HTMT discriminant validity (modern standard)
     discriminant_validity_passed: bool
+    htmt_validity_passed: bool  # More rigorous than Fornell-Larcker
     overall_valid: bool
     warnings: List[str] = field(default_factory=list)
 
@@ -95,11 +97,12 @@ class MeasurementValidator:
         >>> validator.to_latex(Path('output/latex'))
     """
 
-    # Thresholds from Hair et al. (2019)
+    # Thresholds from Hair et al. (2019) and Henseler et al. (2015)
     ALPHA_THRESHOLD = 0.70
     CR_THRESHOLD = 0.70
     AVE_THRESHOLD = 0.50
     LOADING_THRESHOLD = 0.50
+    HTMT_THRESHOLD = 0.85  # Stricter threshold; 0.90 is more lenient
 
     def __init__(self,
                  df: pd.DataFrame,
@@ -287,6 +290,12 @@ class MeasurementValidator:
 
         where λ = standardized factor loadings
 
+        IMPORTANT: This formula assumes the congeneric measurement model with
+        uncorrelated measurement errors. If error correlations exist (e.g., due
+        to method effects or reverse-coded items), CR will be overestimated.
+        For models with correlated errors, use SEM-based CR from factor analysis
+        output that includes error covariances.
+
         Threshold: CR > 0.70 (Hair et al., 2019)
 
         Args:
@@ -313,6 +322,11 @@ class MeasurementValidator:
 
         Formula:
             AVE = Σλ² / [Σλ² + Σ(1 - λ²)]
+
+        IMPORTANT: Like CR, this formula assumes the congeneric measurement
+        model with uncorrelated measurement errors. AVE may be inflated if
+        error correlations exist. For rigorous discriminant validity testing,
+        consider HTMT (Heterotrait-Monotrait) ratio as an alternative.
 
         Threshold: AVE > 0.50 (Fornell & Larcker, 1981)
 
@@ -402,6 +416,103 @@ class MeasurementValidator:
 
         return fl_matrix, passed
 
+    def htmt_test(self, threshold: float = None) -> Tuple[pd.DataFrame, bool]:
+        """
+        Perform HTMT (Heterotrait-Monotrait) test for discriminant validity.
+
+        HTMT is the recommended modern alternative to Fornell-Larcker criterion.
+        It is more rigorous and has better detection rate for discriminant validity
+        violations (Henseler et al., 2015).
+
+        Formula:
+            HTMT(i,j) = mean(het_ij) / sqrt(mean(mono_i) * mean(mono_j))
+
+        where:
+            het_ij = correlations between items of construct i and construct j
+            mono_i = correlations between items within construct i
+            mono_j = correlations between items within construct j
+
+        Threshold: HTMT < 0.85 (strict) or HTMT < 0.90 (more lenient)
+
+        Reference:
+            Henseler, J., Ringle, C.M., & Sarstedt, M. (2015). A new criterion for
+            assessing discriminant validity in variance-based structural equation
+            modeling. Journal of the Academy of Marketing Science, 43(1), 115-135.
+
+        Args:
+            threshold: HTMT threshold (default: 0.85)
+
+        Returns:
+            Tuple of (HTMT matrix, passed: bool)
+        """
+        if threshold is None:
+            threshold = self.HTMT_THRESHOLD
+
+        constructs = list(self.constructs.keys())
+        n = len(constructs)
+
+        if n < 2:
+            # Cannot compute HTMT with single construct
+            return pd.DataFrame(), True
+
+        # Get all item correlations
+        all_items = [item for items in self.constructs.values() for item in items]
+        item_corr = self.df[all_items].corr()
+
+        # Compute HTMT matrix
+        htmt_matrix = pd.DataFrame(
+            np.zeros((n, n)),
+            index=constructs,
+            columns=constructs
+        )
+
+        def mean_within_correlations(items: List[str]) -> float:
+            """Mean of within-construct correlations (excluding diagonal)."""
+            if len(items) < 2:
+                return 1.0  # Single item construct
+            corrs = []
+            for i, item1 in enumerate(items):
+                for j, item2 in enumerate(items):
+                    if i < j:  # Only lower triangle, exclude diagonal
+                        corrs.append(abs(item_corr.loc[item1, item2]))
+            return np.mean(corrs) if corrs else 1.0
+
+        def mean_between_correlations(items1: List[str], items2: List[str]) -> float:
+            """Mean of between-construct correlations."""
+            corrs = []
+            for item1 in items1:
+                for item2 in items2:
+                    corrs.append(abs(item_corr.loc[item1, item2]))
+            return np.mean(corrs) if corrs else 0.0
+
+        passed = True
+        for i, c1 in enumerate(constructs):
+            items1 = self.constructs[c1]
+            mono1 = mean_within_correlations(items1)
+
+            for j, c2 in enumerate(constructs):
+                if i == j:
+                    htmt_matrix.iloc[i, j] = np.nan  # Diagonal not applicable
+                else:
+                    items2 = self.constructs[c2]
+                    mono2 = mean_within_correlations(items2)
+                    hetero = mean_between_correlations(items1, items2)
+
+                    # HTMT formula
+                    denominator = np.sqrt(mono1 * mono2)
+                    if denominator > 0:
+                        htmt = hetero / denominator
+                    else:
+                        htmt = np.nan
+
+                    htmt_matrix.iloc[i, j] = htmt
+
+                    # Check threshold (only check lower triangle to avoid double counting)
+                    if i > j and not np.isnan(htmt) and htmt >= threshold:
+                        passed = False
+
+        return htmt_matrix, passed
+
     def validate_construct(self, construct: str) -> ConstructMetrics:
         """
         Run all validation metrics for a single construct.
@@ -441,8 +552,11 @@ class MeasurementValidator:
         # Correlation matrix
         corr_matrix = self.construct_correlation_matrix()
 
-        # Fornell-Larcker test
+        # Fornell-Larcker test (traditional)
         fl_matrix, discriminant_valid = self.fornell_larcker_test()
+
+        # HTMT test (modern, more rigorous)
+        htmt_matrix, htmt_valid = self.htmt_test()
 
         # Collect warnings
         warnings_list = []
@@ -468,17 +582,24 @@ class MeasurementValidator:
         if not discriminant_valid:
             warnings_list.append("Discriminant validity (Fornell-Larcker) NOT satisfied")
 
-        # Overall validity
+        if not htmt_valid:
+            warnings_list.append(
+                f"Discriminant validity (HTMT) NOT satisfied - some pairs exceed {self.HTMT_THRESHOLD:.2f} threshold"
+            )
+
+        # Overall validity - use HTMT as primary (more rigorous than Fornell-Larcker)
         overall_valid = (
             all(m.is_valid for m in construct_metrics.values())
-            and discriminant_valid
+            and htmt_valid  # HTMT is the recommended modern criterion
         )
 
         self._results = MeasurementValidationResult(
             construct_metrics=construct_metrics,
             correlation_matrix=corr_matrix,
             fornell_larcker_matrix=fl_matrix,
+            htmt_matrix=htmt_matrix,
             discriminant_validity_passed=discriminant_valid,
+            htmt_validity_passed=htmt_valid,
             overall_valid=overall_valid,
             warnings=warnings_list
         )
@@ -527,9 +648,9 @@ class MeasurementValidator:
                 flag = "" if loading >= 0.50 else " *LOW*"
                 print(f"  {item:<25} λ={loading:.3f} (SE={se:.3f}) ITC={itc:.3f}{flag}")
 
-        # Discriminant validity
+        # Discriminant validity - Fornell-Larcker (traditional)
         print("\n" + "-" * 70)
-        print("DISCRIMINANT VALIDITY (Fornell-Larcker)")
+        print("DISCRIMINANT VALIDITY (Fornell-Larcker) - Traditional")
         print("-" * 70)
         print("\nDiagonal = sqrt(AVE), Off-diagonal = correlations")
         print("Criterion: Diagonal > all off-diagonal in same row/column")
@@ -537,7 +658,25 @@ class MeasurementValidator:
         print(self._results.fornell_larcker_matrix.to_string(float_format=lambda x: f'{x:.3f}'))
 
         status = "PASSED" if self._results.discriminant_validity_passed else "FAILED"
-        print(f"\nDiscriminant Validity: {status}")
+        print(f"\nFornell-Larcker: {status}")
+
+        # Discriminant validity - HTMT (modern, recommended)
+        print("\n" + "-" * 70)
+        print("DISCRIMINANT VALIDITY (HTMT) - Recommended Modern Criterion")
+        print("-" * 70)
+        print("\nHTMT = mean(heterotrait correlations) / sqrt(mean(monotrait correlations))")
+        print(f"Threshold: HTMT < {self.HTMT_THRESHOLD:.2f} (Henseler et al., 2015)")
+        print()
+        if not self._results.htmt_matrix.empty:
+            print(self._results.htmt_matrix.to_string(
+                float_format=lambda x: f'{x:.3f}' if not np.isnan(x) else '-',
+                na_rep='-'
+            ))
+        else:
+            print("  (Single construct - HTMT not applicable)")
+
+        status = "PASSED" if self._results.htmt_validity_passed else "FAILED"
+        print(f"\nHTMT: {status}")
 
         # Warnings
         if self._results.warnings:
@@ -577,10 +716,16 @@ class MeasurementValidator:
         self._latex_loadings_table(loadings_path)
         output_files['loadings'] = loadings_path
 
-        # Table 3: Discriminant Validity
+        # Table 3: Discriminant Validity (Fornell-Larcker)
         discriminant_path = output_dir / "discriminant_validity.tex"
         self._latex_discriminant_table(discriminant_path)
         output_files['discriminant'] = discriminant_path
+
+        # Table 4: HTMT (Modern Discriminant Validity)
+        if not self._results.htmt_matrix.empty:
+            htmt_path = output_dir / "htmt_discriminant_validity.tex"
+            self._latex_htmt_table(htmt_path)
+            output_files['htmt'] = htmt_path
 
         print(f"LaTeX tables saved to {output_dir}/")
         return output_files
@@ -707,6 +852,56 @@ class MeasurementValidator:
             r"\small",
             r"\item Note: Diagonal (bold) = $\sqrt{\text{AVE}}$; Off-diagonal = correlations.",
             r"\item Criterion: Diagonal values should exceed off-diagonal values in same row/column.",
+            r"\end{tablenotes}",
+            r"\end{table}",
+        ])
+
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines))
+
+    def _latex_htmt_table(self, path: Path):
+        """Generate HTMT discriminant validity table (modern criterion)."""
+        htmt = self._results.htmt_matrix
+        constructs = list(htmt.columns)
+
+        lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{Discriminant Validity: HTMT Criterion}",
+            r"\label{tab:htmt_validity}",
+            r"\begin{tabular}{l" + "c" * len(constructs) + "}",
+            r"\toprule",
+            " & " + " & ".join([c.replace('_', ' ').title() for c in constructs]) + r" \\",
+            r"\midrule",
+        ]
+
+        for i, c1 in enumerate(constructs):
+            display_name = c1.replace('_', ' ').title()
+            values = []
+            for j, c2 in enumerate(constructs):
+                val = htmt.iloc[i, j]
+                if i == j:
+                    values.append("---")  # Diagonal not applicable
+                elif j < i:
+                    # Lower triangle: show value, bold if exceeds threshold
+                    if np.isnan(val):
+                        values.append("---")
+                    elif val >= self.HTMT_THRESHOLD:
+                        values.append(f"\\textbf{{{val:.3f}}}$^*$")
+                    else:
+                        values.append(f"{val:.3f}")
+                else:
+                    values.append("")  # Upper triangle empty
+            lines.append(f"{display_name} & " + " & ".join(values) + r" \\")
+
+        lines.extend([
+            r"\bottomrule",
+            r"\end{tabular}",
+            r"\begin{tablenotes}",
+            r"\small",
+            r"\item Note: HTMT = Heterotrait-Monotrait ratio (Henseler et al., 2015).",
+            f"\\item Threshold: HTMT < {self.HTMT_THRESHOLD:.2f}. Values marked with $^*$ exceed threshold.",
+            r"\item HTMT is more rigorous than Fornell-Larcker and recommended for SEM.",
             r"\end{tablenotes}",
             r"\end{table}",
         ])

@@ -10,7 +10,7 @@
       "B_FEE_AGE": 0.06,
       "B_FEE_EDU": 0.08,
       "B_FEE_INC": 0.12,
-      "B_DUR": -0.08,
+      "B_DUR": -0.12,
       "B_DUR_EDU": -0.04,
       "B_DUR_INC": -0.03
     }
@@ -21,7 +21,7 @@
     "seed": 42
   },
   "design": {
-    "path": "../../full_model/data/raw/scenarios_prepared.csv",
+    "path": "../shared/data/scenarios.csv",
     "sample_with_replacement": true
   },
   "demographics": {
@@ -77,7 +77,7 @@
         "name": "B_DUR",
         "attribute": "dur",
         "apply_to": ["paid1", "paid2", "standard"],
-        "base_coef": -0.08,
+        "base_coef": -0.12,
         "interactions": [
           {"with": "edu_idx", "coef": -0.04},
           {"with": "income_indiv_idx", "coef": -0.03}

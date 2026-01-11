@@ -14,6 +14,16 @@ Structural Model:
 
 Measurement Model:
     3 Likert items per construct with specified loadings
+    Ordered probit with thresholds: [-1.0, -0.35, 0.35, 1.0]
+
+Note on Fixed Thresholds:
+    This DGP uses FIXED thresholds for the ordered probit measurement model.
+    This is intentional for validation studies where we want a known measurement
+    structure to verify parameter recovery. For real-world applications with
+    actual survey data, thresholds should be ESTIMATED from the data.
+    See Train (2009) and Hensher et al. (2015) for discussion.
+
+Uses shared DGP library to eliminate code duplication.
 """
 
 import json
@@ -26,116 +36,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.sample_stats import generate_sample_stats
 from shared.cleanup import cleanup_simulation_outputs
-from scipy import stats
 
-
-def softmax(utilities: np.ndarray) -> np.ndarray:
-    """Compute choice probabilities using softmax."""
-    u = utilities - np.max(utilities)
-    exp_u = np.exp(u)
-    return exp_u / exp_u.sum()
-
-
-def draw_gumbel_errors(rng: np.random.Generator, n: int) -> np.ndarray:
-    """
-    Draw Gumbel(0,1) errors for random utility model.
-
-    The Gumbel distribution: ε = -ln(-ln(U)) where U ~ Uniform(0,1).
-    This makes the RUM foundation explicit: U_ij = V_ij + ε_ij
-    """
-    u = rng.uniform(1e-10, 1 - 1e-10, size=n)
-    return -np.log(-np.log(u))
-
-
-def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
-    """Sample from a categorical distribution."""
-    return rng.choice(spec['values'], p=spec['probs'])
-
-
-def generate_latent_variable(rng: np.random.Generator, demographics: dict,
-                              lv_config: dict) -> float:
-    """Generate latent variable from structural model."""
-    struct = lv_config['structural']
-
-    # Compute systematic component
-    lv = struct.get('intercept', 0.0)
-
-    for demo_name, beta in struct.get('betas', {}).items():
-        demo_val = demographics[demo_name]
-        # Use center from the demographics config if not in structural
-        center = 0
-        if 'center' in struct:
-            center = struct['center']
-        lv += beta * (demo_val - center)
-
-    # Add random component
-    sigma = struct.get('sigma', 1.0)
-    lv += rng.normal(0, sigma)
-
-    return lv
-
-
-def generate_likert_items(rng: np.random.Generator, lv_value: float,
-                          measurement_config: dict) -> dict:
-    """Generate Likert items from latent variable using ordered probit."""
-    items = measurement_config['items']
-    loadings = measurement_config['loadings']
-    thresholds = measurement_config['thresholds']
-
-    responses = {}
-    for item_name, loading in zip(items, loadings):
-        # Continuous latent response
-        y_star = loading * lv_value + rng.normal(0, 1)
-
-        # Convert to ordinal using thresholds
-        response = 1
-        for thresh in thresholds:
-            if y_star > thresh:
-                response += 1
-        responses[item_name] = min(response, 5)
-
-    return responses
-
-
-def get_attribute_value(scenario: pd.Series, alt_idx: str, attribute: str, fee_scale: float) -> float:
-    """Extract attribute value for an alternative from scenario."""
-    col_name = f"{attribute}{alt_idx}"
-    value = scenario[col_name]
-    if attribute == 'fee':
-        value = value / fee_scale
-    return float(value)
-
-
-def compute_utility(choice_cfg: dict, scenario: pd.Series, alt_idx: str, alt_info: dict,
-                    latent_values: dict) -> float:
-    """Compute utility with latent variable interactions."""
-    V = 0.0
-    fee_scale = choice_cfg.get('fee_scale', 10000.0)
-    alt_name = alt_info['name']
-
-    # Add ASC if applicable
-    for term in choice_cfg.get('base_terms', []):
-        if alt_name in term.get('apply_to', []):
-            V += term['coef']
-
-    # Add attribute effects with LV interactions
-    for term in choice_cfg.get('attribute_terms', []):
-        if alt_name not in term.get('apply_to', []):
-            continue
-
-        attr_value = get_attribute_value(scenario, alt_idx, term['attribute'], fee_scale)
-
-        # Compute coefficient with interactions
-        coef = term['base_coef']
-        for inter in term.get('interactions', []):
-            if inter.get('type') == 'latent':
-                lv_name = inter['with']
-                if lv_name in latent_values:
-                    coef += inter['coef'] * latent_values[lv_name]
-
-        V += coef * attr_value
-
-    return V
+# Import shared DGP functions
+from shared.dgp import (
+    draw_categorical,
+    compute_base_utility,
+    simulate_choice,
+    hcm_coefficient_function,
+    generate_all_latent_hcm,
+)
 
 
 def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.DataFrame:
@@ -162,11 +71,8 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
     alternatives = cfg['choice_model']['alternatives']
     alt_indices = list(alternatives.keys())
     latent_cfg = cfg.get('latent', {})
-
-    # Get demographic centering values
-    demo_centers = {}
-    for demo_name, demo_spec in cfg.get('demographics', {}).items():
-        demo_centers[demo_name] = demo_spec.get('center', 0)
+    demo_specs = cfg.get('demographics', {})
+    fee_scale = cfg['choice_model'].get('fee_scale', 10000.0)
 
     records = []
     true_lv_values = []
@@ -174,60 +80,41 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
     for i in range(N):
         # Draw demographics
         agent_demographics = {}
-        for demo_name, demo_spec in cfg.get('demographics', {}).items():
+        for demo_name, demo_spec in demo_specs.items():
             agent_demographics[demo_name] = draw_categorical(rng, demo_spec)
 
-        # Generate latent variables with demographic centering
-        latent_values = {}
-        likert_responses = {}
-        for lv_name, lv_config in latent_cfg.items():
-            # Add centering info to structural config
-            struct = lv_config['structural'].copy()
-            for demo_name in struct.get('betas', {}).keys():
-                if demo_name in demo_centers:
-                    struct['center'] = demo_centers[demo_name]
+        # Generate latent variables and Likert items using shared DGP
+        latent_values, likert_responses = generate_all_latent_hcm(
+            rng, agent_demographics, latent_cfg, demo_specs
+        )
 
-            lv_config_with_center = lv_config.copy()
-            lv_config_with_center['structural'] = struct
-
-            # Generate with center from demographics config
-            struct = lv_config['structural']
-            lv = struct.get('intercept', 0.0)
-            for demo_name, beta in struct.get('betas', {}).items():
-                demo_val = agent_demographics[demo_name]
-                center = demo_centers.get(demo_name, 0)
-                lv += beta * (demo_val - center)
-            sigma = struct.get('sigma', 1.0)
-            lv += rng.normal(0, sigma)
-            latent_values[lv_name] = lv
-
-            # Generate Likert items
-            items = generate_likert_items(rng, lv, lv_config['measurement'])
-            likert_responses.update(items)
-
-        # Store true LV for verification
+        # Store true LV for verification (include demographics for ICLV analysis)
         true_lv_values.append({'ID': i, **agent_demographics, **latent_values})
+
+        # Get individual coefficients with latent variable effects
+        individual_coefs = hcm_coefficient_function(
+            agent_demographics, latent_values, cfg, rng
+        )
 
         # Simulate T choice tasks
         for t in range(T):
             scenario_idx = rng.integers(0, n_scenarios)
             scenario = scenarios.iloc[scenario_idx]
 
+            # Compute utilities using shared DGP
             utilities = []
             for alt_idx in alt_indices:
                 alt_info = alternatives[alt_idx]
-                u = compute_utility(cfg['choice_model'], scenario, alt_idx, alt_info, latent_values)
+                u = compute_base_utility(
+                    cfg['choice_model'], scenario, alt_idx, alt_info,
+                    individual_coefficients=individual_coefs
+                )
                 utilities.append(u)
 
             utilities = np.array(utilities)
 
-            # Add Gumbel errors to get total utilities (RUM: U = V + ε)
-            gumbel_errors = draw_gumbel_errors(rng, len(utilities))
-            total_utilities = utilities + gumbel_errors
-
-            # Choose alternative with highest total utility
-            choice_idx = np.argmax(total_utilities)
-            choice = int(alt_indices[choice_idx])
+            # Simulate choice using RUM (V + Gumbel error)
+            choice = simulate_choice(utilities, rng, alt_indices)
 
             record = {
                 'ID': i,
@@ -239,7 +126,7 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
                 **{col: scenario[col] for col in scenarios.columns}
             }
 
-            fee_scale = cfg['choice_model']['fee_scale']
+            # Add scaled fee columns
             for alt_idx in alt_indices:
                 record[f'fee{alt_idx}_10k'] = scenario[f'fee{alt_idx}'] / fee_scale
 

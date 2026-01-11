@@ -8,6 +8,8 @@ This simulator generates data that matches exactly what MNL Basic can estimate:
 - No demographic interactions
 - No latent variable effects
 - No random coefficients
+
+Uses shared DGP library to eliminate code duplication.
 """
 
 import json
@@ -21,79 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.sample_stats import generate_sample_stats
 from shared.cleanup import cleanup_simulation_outputs
 
-
-def softmax(utilities: np.ndarray) -> np.ndarray:
-    """Compute choice probabilities using softmax."""
-    u = utilities - np.max(utilities)  # Numerical stability
-    exp_u = np.exp(u)
-    return exp_u / exp_u.sum()
-
-
-def draw_gumbel_errors(rng: np.random.Generator, n: int) -> np.ndarray:
-    """
-    Draw Gumbel(0,1) errors for random utility model.
-
-    The Gumbel distribution is derived from uniform: ε = -ln(-ln(U))
-    where U ~ Uniform(0,1).
-
-    This explicit error structure makes the RUM foundation clear:
-    U_ij = V_ij + ε_ij, where ε_ij ~ iid Gumbel(0,1)
-
-    Note: Drawing from Gumbel and choosing argmax is mathematically
-    equivalent to multinomial sampling from softmax probabilities,
-    but makes the error structure explicit for pedagogical purposes.
-    """
-    u = rng.uniform(1e-10, 1 - 1e-10, size=n)  # Avoid log(0)
-    return -np.log(-np.log(u))
-
-
-def draw_categorical(rng: np.random.Generator, spec: dict) -> int:
-    """Sample from a categorical distribution."""
-    return rng.choice(spec['values'], p=spec['probs'])
-
-
-def get_attribute_value(scenario: pd.Series, alt_idx: str, attribute: str, fee_scale: float) -> float:
-    """Extract attribute value for an alternative from scenario."""
-    col_name = f"{attribute}{alt_idx}"
-    value = scenario[col_name]
-
-    # Scale fee values
-    if attribute == 'fee':
-        value = value / fee_scale
-
-    return float(value)
-
-
-def compute_utility(choice_cfg: dict, scenario: pd.Series, alt_idx: str, alt_info: dict) -> float:
-    """
-    Compute utility for one alternative.
-
-    For MNL Basic: V = ASC (if applicable) + B_FEE * fee + B_DUR * dur
-    No interactions are applied.
-    """
-    V = 0.0
-    fee_scale = choice_cfg.get('fee_scale', 10000.0)
-    alt_name = alt_info['name']
-
-    # Add ASC if this alternative has one
-    for term in choice_cfg.get('base_terms', []):
-        if alt_name in term.get('apply_to', []):
-            V += term['coef']
-
-    # Add attribute effects (NO interactions for MNL Basic)
-    for term in choice_cfg.get('attribute_terms', []):
-        if alt_name not in term.get('apply_to', []):
-            continue
-
-        # Get attribute value
-        attr_value = get_attribute_value(scenario, alt_idx, term['attribute'], fee_scale)
-
-        # Use only base coefficient (no interactions)
-        coef = term['base_coef']
-
-        V += coef * attr_value
-
-    return V
+# Import shared DGP functions (eliminates ~70 lines of duplicated code)
+from shared.dgp import (
+    draw_categorical,
+    compute_base_utility,
+    simulate_choice,
+    mnl_coefficient_function,
+)
 
 
 def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.DataFrame:
@@ -129,14 +65,18 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
     # Get alternative configuration
     alternatives = cfg['choice_model']['alternatives']
     alt_indices = list(alternatives.keys())
+    fee_scale = cfg['choice_model'].get('fee_scale', 10000.0)
 
     records = []
 
     for i in range(N):
-        # Draw demographics (stored but NOT used in utility)
+        # Draw demographics (stored but NOT used in utility for MNL Basic)
         agent_demographics = {}
         for demo_name, demo_spec in cfg.get('demographics', {}).items():
             agent_demographics[demo_name] = draw_categorical(rng, demo_spec)
+
+        # Get individual coefficients (None for MNL Basic - uses base coefficients)
+        individual_coefs = mnl_coefficient_function(agent_demographics, {}, cfg, rng)
 
         # Simulate T choice tasks
         for t in range(T):
@@ -144,23 +84,20 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
             scenario_idx = rng.integers(0, n_scenarios)
             scenario = scenarios.iloc[scenario_idx]
 
-            # Compute utilities for each alternative
+            # Compute utilities for each alternative using shared DGP
             utilities = []
             for alt_idx in alt_indices:
                 alt_info = alternatives[alt_idx]
-                u = compute_utility(cfg['choice_model'], scenario, alt_idx, alt_info)
+                u = compute_base_utility(
+                    cfg['choice_model'], scenario, alt_idx, alt_info,
+                    individual_coefficients=individual_coefs
+                )
                 utilities.append(u)
 
             utilities = np.array(utilities)
 
-            # Add Gumbel errors to get total utilities (RUM: U = V + ε)
-            # This makes the random utility foundation explicit
-            gumbel_errors = draw_gumbel_errors(rng, len(utilities))
-            total_utilities = utilities + gumbel_errors
-
-            # Choose alternative with highest total utility
-            choice_idx = np.argmax(total_utilities)
-            choice = int(alt_indices[choice_idx])
+            # Simulate choice using RUM (V + Gumbel error)
+            choice = simulate_choice(utilities, rng, alt_indices)
 
             # Build record with all needed columns
             record = {
@@ -175,7 +112,6 @@ def simulate(config_path: Path, output_path: Path, verbose: bool = True) -> pd.D
             }
 
             # Add scaled fee columns for estimation
-            fee_scale = cfg['choice_model']['fee_scale']
             for alt_idx in alt_indices:
                 record[f'fee{alt_idx}_10k'] = scenario[f'fee{alt_idx}'] / fee_scale
 

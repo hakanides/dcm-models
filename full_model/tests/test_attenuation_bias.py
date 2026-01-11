@@ -23,7 +23,7 @@ ICLV reduces this bias by:
     2. Integrating over the latent variable distribution
     3. Using full information from indicators
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import pytest

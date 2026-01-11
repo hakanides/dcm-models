@@ -1,23 +1,26 @@
 {
   "model_info": {
-    "name": "HCM Basic",
-    "description": "Hybrid Choice Model with single latent variable (Blind Patriotism) on fee sensitivity",
-    "parameters": ["ASC_paid", "B_FEE", "B_FEE_PatBlind", "B_DUR"],
+    "name": "HCM Basic (ICLV)",
+    "description": "Hybrid Choice Model with single latent variable (Blind Patriotism) on fee sensitivity. Uses simultaneous ICLV estimation with structural equations.",
+    "parameters": ["ASC_paid", "B_FEE", "B_FEE_PatBlind", "B_DUR", "gamma_age", "sigma_LV"],
     "true_values": {
       "ASC_paid": 5.0,
       "B_FEE": -0.08,
       "B_FEE_PatBlind": -0.10,
-      "B_DUR": -0.08
+      "B_DUR": -0.12,
+      "gamma_age": 0.20,
+      "sigma_LV": 1.0
     },
-    "note": "Two-stage estimation causes ~15-25% attenuation bias on LV effect"
+    "note": "Simultaneous ICLV estimation eliminates attenuation bias. Structural equation: η = γ_age * (age - 2) + σ * ω"
   },
   "population": {
-    "N": 500,
+    "N": 800,
     "T": 10,
-    "seed": 42
+    "seed": 42,
+    "_note": "N>=800 recommended for ICLV per Train (2009)"
   },
   "design": {
-    "path": "../../full_model/data/raw/scenarios_prepared.csv",
+    "path": "../shared/data/scenarios.csv",
     "sample_with_replacement": true
   },
   "demographics": {
@@ -72,7 +75,7 @@
         "name": "B_DUR",
         "attribute": "dur",
         "apply_to": ["paid1", "paid2", "standard"],
-        "base_coef": -0.08,
+        "base_coef": -0.12,
         "interactions": []
       }
     ]

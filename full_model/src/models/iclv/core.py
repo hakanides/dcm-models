@@ -17,7 +17,7 @@ Where:
     - η_r = draw r from structural equation: η = Γ*X + ζ
     - R = number of simulation draws
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

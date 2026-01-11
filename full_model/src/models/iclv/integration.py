@@ -8,7 +8,7 @@ for simulated maximum likelihood estimation.
 Uses Halton sequences for better coverage than pseudo-random draws,
 reducing simulation variance for the same number of draws.
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

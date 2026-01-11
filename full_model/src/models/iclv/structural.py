@@ -16,7 +16,7 @@ Where:
 
 For identification, typically Ψ = I (identity matrix) for the base model.
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

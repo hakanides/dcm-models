@@ -7,7 +7,7 @@ Compute price elasticities for discrete choice models.
 Elasticities measure the percentage change in choice probability
 resulting from a percentage change in an attribute.
 
-Formulas (Logit):
+Formulas (Standard Logit/MNL):
     Own-price elasticity:
         η_jj = β * x_j * (1 - P_j)
 
@@ -23,7 +23,27 @@ For fee elasticities with scale factor:
     η_jj = B_FEE * (fee_j / scale) * (1 - P_j)
     η_jk = -B_FEE * (fee_k / scale) * P_k
 
-Author: DCM Research Team
+IMPORTANT LIMITATION FOR HCM/ICLV MODELS:
+=========================================
+These formulas are ONLY correct for standard MNL models. For HCM/ICLV models
+with latent variable interactions (e.g., B_FEE_i = B_FEE + B_FEE_LV * η),
+the elasticity formulas are more complex because:
+
+1. The effective coefficient varies across individuals: β_i = β + β_LV * η_i
+2. The derivative ∂P/∂β must account for how η enters the utility
+3. Standard errors require the full covariance matrix including LV parameters
+
+For HCM/ICLV, the correct approach is:
+- Use simulation-based elasticities (draw η and compute for each individual)
+- Or compute average elasticity across the population
+- Standard errors should use bootstrap or simulation
+
+References:
+- Train (2009): Discrete Choice Methods with Simulation, Ch. 6
+- Hensher et al. (2015): Applied Choice Analysis, Ch. 13
+- Ben-Akiva et al. (2002): Hybrid Choice Models
+
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -106,6 +126,20 @@ class ElasticityCalculator:
 
         self.config = config or PolicyAnalysisConfig()
 
+        # Check for latent variable parameters and warn if detected
+        lv_params = [p for p in self.result.betas.keys()
+                     if any(lv in p.lower() for lv in ['patblind', 'pat_blind', 'secdl', 'sec_dl',
+                                                        '_lv', 'latent', 'gamma_', 'sigma_lv'])]
+        if lv_params:
+            import warnings
+            warnings.warn(
+                f"HCM/ICLV parameters detected: {lv_params}. "
+                f"Elasticity formulas in this module are only correct for standard MNL. "
+                f"For HCM/ICLV models, use simulation-based elasticities or bootstrap. "
+                f"See module docstring for details.",
+                UserWarning
+            )
+
     def _compute_probabilities(self, scenario: PolicyScenario) -> np.ndarray:
         """Compute choice probabilities for a scenario."""
         utilities = compute_utilities(scenario, self.result, self.config)
@@ -123,6 +157,20 @@ class ElasticityCalculator:
 
         This measures how the probability of choosing alternative j
         changes when its own attribute changes.
+
+        SIGN INTERPRETATION (consistent with economic theory):
+        - For "bad" attributes (β < 0, e.g., fee, duration):
+          η < 0 means INCREASE in attribute DECREASES choice probability
+          This is expected: higher fee → lower demand (correct negative sign)
+
+        - For "good" attributes (β > 0):
+          η > 0 means INCREASE in attribute INCREASES choice probability
+
+        NOTE: Unlike WTP which has a `for_improvement` option to flip signs,
+        elasticity preserves the raw formula sign. This is intentional because:
+        - Elasticity sign directly indicates direction of response
+        - Negative own-price elasticity is standard for normal goods
+        - Cross-elasticity sign indicates substitute (positive) vs complement (negative)
 
         Args:
             scenario: Policy scenario with attribute levels
@@ -504,6 +552,213 @@ class ElasticityCalculator:
             print(f"  Alt {j+1}: {eta:.3f} ({interp})")
 
         print(f"\n{'='*60}")
+
+
+def compute_hcm_elasticity(result: Union[EstimationResult, Dict[str, Any]],
+                            scenario: PolicyScenario,
+                            alternative: int = 0,
+                            attribute: str = 'fee',
+                            lv_interaction_params: Dict[str, str] = None,
+                            n_draws: int = 10000,
+                            config: PolicyAnalysisConfig = None,
+                            seed: int = 42) -> Dict[str, Any]:
+    """
+    Compute simulation-based elasticity for HCM/ICLV models.
+
+    CORRECT METHOD for models with latent variable heterogeneity.
+
+    For HCM/ICLV, the effective coefficient varies across individuals:
+        β_i = β + Σ β_LV_k * η_k
+
+    where η_k ~ N(μ_k, σ_k²) are latent variables.
+
+    This function:
+    1. Draws η values from their estimated distributions
+    2. Computes individual-specific coefficients β_i
+    3. Calculates elasticity for each simulated individual
+    4. Returns distribution of elasticities with proper uncertainty
+
+    Args:
+        result: Estimation results containing LV parameters
+        scenario: Policy scenario with attribute levels
+        alternative: Alternative index for own-price elasticity
+        attribute: Attribute name ('fee' or 'dur')
+        lv_interaction_params: Dict mapping LV names to interaction parameters
+            e.g., {'pat_blind': 'B_FEE_PatBlind', 'sec_dl': 'B_FEE_SecDL'}
+            If None, attempts to auto-detect from result.betas
+        n_draws: Number of simulation draws
+        config: Policy analysis configuration
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dictionary with:
+        - mean: Population-average elasticity
+        - std: Standard deviation of elasticity distribution
+        - median: Median elasticity
+        - ci_lower, ci_upper: 95% confidence interval
+        - pct_elastic: Percent of population with |η| > 1
+        - draws: Raw elasticity draws for further analysis
+
+    Example:
+        >>> # For ICLV model with two latent variables
+        >>> elas = compute_hcm_elasticity(
+        ...     result,
+        ...     scenario,
+        ...     alternative=0,
+        ...     lv_interaction_params={
+        ...         'pat_blind': 'B_FEE_PatBlind',
+        ...         'sec_dl': 'B_FEE_SecDL'
+        ...     }
+        ... )
+        >>> print(f"Population elasticity: {elas['mean']:.3f}")
+    """
+    if isinstance(result, dict):
+        result = EstimationResult.from_dict(result)
+
+    config = config or PolicyAnalysisConfig()
+
+    # Determine base coefficient parameter
+    if attribute == 'fee':
+        base_param = config.fee_param
+    elif attribute == 'dur':
+        base_param = config.dur_param
+    else:
+        base_param = f'B_{attribute.upper()}'
+
+    beta_base = result.betas.get(base_param, 0)
+
+    # Auto-detect LV interaction parameters if not provided
+    # Uses pattern matching on parameter names rather than hardcoded LV names
+    if lv_interaction_params is None:
+        lv_interaction_params = {}
+        base_attr = base_param.lower().replace('b_', '')  # e.g., 'fee' or 'dur'
+
+        for param_name in result.betas.keys():
+            param_lower = param_name.lower()
+
+            # Skip the base parameter itself
+            if param_name == base_param:
+                continue
+
+            # Check if this looks like an LV interaction: B_<attr>_<lvname>
+            # Pattern: param contains the attribute name AND is longer (has LV suffix)
+            if base_attr in param_lower and len(param_name) > len(base_param):
+                # Extract the LV name from the parameter name
+                # e.g., 'B_FEE_PAT_BLIND' -> 'pat_blind'
+                # or 'B_FEE_PATBLIND' -> 'patblind'
+                parts = param_lower.split('_')
+
+                # Find where the attribute name is and take everything after
+                try:
+                    attr_idx = parts.index(base_attr)
+                    lv_parts = parts[attr_idx + 1:]
+                    if lv_parts:
+                        lv_name = '_'.join(lv_parts)
+                        lv_interaction_params[lv_name] = param_name
+                except (ValueError, IndexError):
+                    # Attribute not found as separate part, try alternative patterns
+                    # e.g., 'b_fee_patblind' where 'fee' is part of 'b_fee'
+                    if param_lower.startswith(f'b_{base_attr}_'):
+                        suffix = param_lower[len(f'b_{base_attr}_'):]
+                        if suffix:
+                            lv_interaction_params[suffix] = param_name
+
+    # Get LV distribution parameters (sigma values)
+    lv_sigmas = {}
+    for lv_name in lv_interaction_params.keys():
+        # Look for sigma parameter for this LV
+        for param_name in result.betas.keys():
+            if 'sigma' in param_name.lower() and lv_name in param_name.lower():
+                lv_sigmas[lv_name] = abs(result.betas[param_name])
+                break
+        if lv_name not in lv_sigmas:
+            # Default to 1.0 if not found (standard normal)
+            lv_sigmas[lv_name] = 1.0
+
+    # Simulate LV draws
+    np.random.seed(seed)
+    n_lvs = len(lv_interaction_params)
+
+    if n_lvs == 0:
+        # No LV interactions found - fall back to standard calculation
+        import warnings
+        warnings.warn(
+            f"No LV interaction parameters found for {base_param}. "
+            f"Using standard MNL elasticity formula.",
+            UserWarning
+        )
+        calc = ElasticityCalculator(result, config)
+        std_result = calc.own_price_elasticity(scenario, alternative, attribute)
+        return {
+            'mean': std_result.elasticity,
+            'std': std_result.se,
+            'median': std_result.elasticity,
+            'ci_lower': std_result.ci_lower,
+            'ci_upper': std_result.ci_upper,
+            'pct_elastic': 100.0 if abs(std_result.elasticity) > 1 else 0.0,
+            'draws': np.array([std_result.elasticity])
+        }
+
+    # Draw LV values (standard normal, scale by sigma)
+    lv_draws = {}
+    for lv_name, sigma in lv_sigmas.items():
+        lv_draws[lv_name] = np.random.normal(0, sigma, n_draws)
+
+    # Compute individual-specific coefficients
+    beta_individuals = np.full(n_draws, beta_base)
+    for lv_name, interaction_param in lv_interaction_params.items():
+        beta_lv = result.betas.get(interaction_param, 0)
+        beta_individuals += beta_lv * lv_draws[lv_name]
+
+    # Get attribute value
+    x = scenario.get_attribute(attribute, alternative)
+    if attribute == 'fee':
+        x = x / config.fee_scale
+
+    # Compute utilities and probabilities for each individual
+    elasticities = np.zeros(n_draws)
+
+    # Base utilities (without the random LV effects on the specific attribute)
+    base_utilities = compute_utilities(scenario, result, config)
+    base_probs = compute_logit_probabilities(base_utilities)
+
+    for i in range(n_draws):
+        # Adjust utility for this individual's coefficient
+        # For alternative j: V_j = ... + β_i * x_j + ...
+        # The difference from base is (β_i - β_base) * x_j
+        delta_beta = beta_individuals[i] - beta_base
+
+        # Compute adjusted utilities
+        utilities_i = base_utilities.copy()
+        for j in range(len(utilities_i)):
+            x_j = scenario.get_attribute(attribute, j)
+            if attribute == 'fee':
+                x_j = x_j / config.fee_scale
+            utilities_i[j] += delta_beta * x_j
+
+        probs_i = compute_logit_probabilities(utilities_i)
+
+        # Own-price elasticity: η = β_i * x * (1 - P)
+        elasticities[i] = beta_individuals[i] * x * (1 - probs_i[alternative])
+
+    # Compute summary statistics
+    alpha = 1 - config.confidence_level
+
+    return {
+        'mean': np.mean(elasticities),
+        'std': np.std(elasticities),
+        'median': np.median(elasticities),
+        'ci_lower': np.percentile(elasticities, alpha/2 * 100),
+        'ci_upper': np.percentile(elasticities, (1 - alpha/2) * 100),
+        'pct_elastic': 100 * np.mean(np.abs(elasticities) > 1),
+        'draws': elasticities,
+        'beta_distribution': {
+            'mean': np.mean(beta_individuals),
+            'std': np.std(beta_individuals),
+            'min': np.min(beta_individuals),
+            'max': np.max(beta_individuals)
+        }
+    }
 
 
 def arc_elasticity(p1: float, p2: float, x1: float, x2: float) -> float:

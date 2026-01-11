@@ -18,7 +18,7 @@ Comparison metrics:
 - BIC (Bayesian Information Criterion)
 - Likelihood Ratio Tests (for nested models)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -58,7 +58,11 @@ def cleanup_iter_files(project_root: Path = None):
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable, bioDraws, MonteCarlo, log, exp
+# Handle Biogeme API changes (bioDraws deprecated in 3.3+, use Draws)
+try:
+    from biogeme.expressions import Beta, Variable, Draws, MonteCarlo, log, exp
+except ImportError:
+    from biogeme.expressions import Beta, Variable, bioDraws as Draws, MonteCarlo, log, exp
 
 
 # =============================================================================

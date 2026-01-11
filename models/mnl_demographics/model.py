@@ -29,29 +29,65 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.policy_tools import run_policy_analysis
 from shared.latex_tools import generate_all_latex
+from shared import validate_required_columns, validate_coefficient_signs
 
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
 from biogeme.expressions import Beta, Variable
 
+# Required columns for MNL Demographics
+REQUIRED_COLUMNS = ['CHOICE', 'fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3',
+                    'age_idx', 'edu_idx', 'income_indiv_idx']
 
-def prepare_data(filepath: Path) -> pd.DataFrame:
+# Alternative availability (1=available, 0=not available)
+# This should match the alternatives defined in config.json
+ALTERNATIVES = {1: 'paid1', 2: 'paid2', 3: 'standard'}
+AV_DICT = {k: 1 for k in ALTERNATIVES.keys()}  # All alternatives available
+
+
+def prepare_data(filepath: Path, config: dict) -> pd.DataFrame:
     """Load and prepare data for estimation."""
     df = pd.read_csv(filepath)
+
+    # Validate required columns exist
+    validate_required_columns(df, REQUIRED_COLUMNS, 'MNL_Demographics')
+
+    # Validate panel structure exists (required for cluster-robust standard errors)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "Panel data with 'ID' column required for cluster-robust standard errors. "
+            "Each individual should have multiple choice observations."
+        )
 
     # Ensure fee columns are scaled
     if 'fee1_10k' not in df.columns:
         for alt in [1, 2, 3]:
             df[f'fee{alt}_10k'] = df[f'fee{alt}'] / 10000.0
 
-    # Ensure centered demographics exist
+    # Get centering and scaling values from config
+    # NOTE: This model uses BOTH centering AND scaling for demographic interactions.
+    # Centering: Improves interpretability of main effects (B_FEE, B_DUR)
+    # Scaling: Standardizes effect sizes so interaction coefficients are comparable
+    #
+    # IMPORTANT: If comparing to ICLV model, ensure consistent transformation:
+    # - If config has scale=1.0, only centering is applied (like ICLV default)
+    # - If config has scale!=1.0, both centering and scaling are applied
+    demographics_cfg = config.get('demographics', {})
+    age_center = demographics_cfg.get('age_idx', {}).get('center', 2.0)
+    age_scale = demographics_cfg.get('age_idx', {}).get('scale', 1.0)  # Default changed to 1.0
+    edu_center = demographics_cfg.get('edu_idx', {}).get('center', 3.0)
+    edu_scale = demographics_cfg.get('edu_idx', {}).get('scale', 1.0)  # Default changed to 1.0
+    inc_center = demographics_cfg.get('income_indiv_idx', {}).get('center', 3.0)
+    inc_scale = demographics_cfg.get('income_indiv_idx', {}).get('scale', 1.0)  # Default changed to 1.0
+
+    # Create centered (and optionally scaled) demographics using config values
     if 'age_c' not in df.columns:
-        df['age_c'] = (df['age_idx'] - 2.0) / 2.0
+        df['age_c'] = (df['age_idx'] - age_center) / age_scale if age_scale != 0 else (df['age_idx'] - age_center)
     if 'edu_c' not in df.columns:
-        df['edu_c'] = (df['edu_idx'] - 3.0) / 2.0
+        df['edu_c'] = (df['edu_idx'] - edu_center) / edu_scale if edu_scale != 0 else (df['edu_idx'] - edu_center)
     if 'inc_c' not in df.columns:
-        df['inc_c'] = (df['income_indiv_idx'] - 3.0) / 2.0
+        df['inc_c'] = (df['income_indiv_idx'] - inc_center) / inc_scale if inc_scale != 0 else (df['income_indiv_idx'] - inc_center)
 
     # Keep only numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -74,19 +110,19 @@ def create_model(database: db.Database):
     edu_c = Variable('edu_c')
     inc_c = Variable('inc_c')
 
-    # Base parameters
-    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
-    B_FEE = Beta('B_FEE', -0.05, -10, 0, 0)
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)
+    # Base parameters - starting values aligned with DGP (config.json)
+    ASC_paid = Beta('ASC_paid', 5.0, -5, 10, 0)   # True: 5.0
+    B_FEE = Beta('B_FEE', -0.08, -1, 0, 0)        # True: -0.08
+    B_DUR = Beta('B_DUR', -0.08, -1, 0, 0)        # True: -0.08
 
-    # Demographic interactions on fee
-    B_FEE_AGE = Beta('B_FEE_AGE', 0, None, None, 0)
-    B_FEE_EDU = Beta('B_FEE_EDU', 0, None, None, 0)
-    B_FEE_INC = Beta('B_FEE_INC', 0, None, None, 0)
+    # Demographic interactions on fee - starting values from DGP
+    B_FEE_AGE = Beta('B_FEE_AGE', 0.06, -1, 1, 0)  # True: 0.06
+    B_FEE_EDU = Beta('B_FEE_EDU', 0.08, -1, 1, 0)  # True: 0.08
+    B_FEE_INC = Beta('B_FEE_INC', 0.12, -1, 1, 0)  # True: 0.12
 
-    # Demographic interactions on duration
-    B_DUR_EDU = Beta('B_DUR_EDU', 0, None, None, 0)
-    B_DUR_INC = Beta('B_DUR_INC', 0, None, None, 0)
+    # Demographic interactions on duration - starting values from DGP
+    B_DUR_EDU = Beta('B_DUR_EDU', -0.04, -1, 1, 0)  # True: -0.04
+    B_DUR_INC = Beta('B_DUR_INC', -0.03, -1, 1, 0)  # True: -0.03
 
     # Individual-specific coefficients
     B_FEE_i = B_FEE + B_FEE_AGE * age_c + B_FEE_EDU * edu_c + B_FEE_INC * inc_c
@@ -98,9 +134,8 @@ def create_model(database: db.Database):
     V3 = B_FEE_i * fee3 + B_DUR_i * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
-    logprob = models.loglogit(V, av, CHOICE)
+    logprob = models.loglogit(V, AV_DICT, CHOICE)
     return logprob
 
 
@@ -125,13 +160,18 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
         print(f"\nTrue parameters: {true_values}")
 
     # Load and prepare data
-    df = prepare_data(data_path)
+    df = prepare_data(data_path, config)
     n_obs = len(df)
+    n_individuals = df['ID'].nunique()
 
     if verbose:
-        print(f"Data: {n_obs} observations")
+        print(f"Data: {n_obs} observations from {n_individuals} individuals")
 
     # Create database
+    # Note: In Biogeme 3.3.1, database.panel() causes CHOICE variable lookup failure
+    # due to internal data reshaping. Robust standard errors are still computed but
+    # are observation-level, not cluster-robust. For cluster-robust SEs, use
+    # bootstrap or upgrade to Biogeme 3.3.2+.
     database = db.Database('mnl_demographics', df)
 
     # Create and estimate model
@@ -139,7 +179,7 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
 
     biogeme_model = bio.BIOGEME(database, logprob)
     biogeme_model.model_name = "MNL_Demographics"
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     # Change to results dir for output files
     original_dir = os.getcwd()
@@ -153,6 +193,18 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     finally:
         os.chdir(original_dir)
 
+    # Check convergence status
+    general_stats = results.get_general_statistics()
+    converged = True
+    for key, val in general_stats.items():
+        if 'Optimization' in key and 'algorithm' not in key.lower():
+            status = str(val[0]) if isinstance(val, tuple) else str(val)
+            if 'success' not in status.lower() and 'converged' not in status.lower():
+                converged = False
+                if verbose:
+                    print(f"\nWARNING: Optimization may not have converged! Status: {status}")
+                break
+
     # Extract results
     estimates_df = results.get_estimated_parameters()
     estimates_df = estimates_df.set_index('Name')
@@ -162,8 +214,11 @@ def estimate(model_dir: Path, verbose: bool = True) -> dict:
     tstats = estimates_df['Robust t-stat.'].to_dict()
     pvals = estimates_df['Robust p-value'].to_dict()
 
-    # Get fit statistics
-    general_stats = results.get_general_statistics()
+    # Validate coefficient signs
+    if verbose:
+        validate_coefficient_signs(betas, model_name='MNL_Demographics')
+
+    # Get fit statistics (reuse general_stats from convergence check)
     final_ll = None
     null_ll = None
     aic = None

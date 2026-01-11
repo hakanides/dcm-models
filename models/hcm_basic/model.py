@@ -6,18 +6,19 @@ HCM Basic Model - Simultaneous Estimation (ICLV)
 Hybrid Choice Model with single latent variable (Blind Patriotism) on fee sensitivity.
 
 Model Specification (Simultaneous ICLV):
-    Structural: η = σ * ω,  ω ~ N(0,1)
+    Structural Model:
+        η = γ_age * (age - 2) + σ * ω,  where ω ~ N(0,1)
 
-    Measurement (Ordered Logit):
-        P(I_k = j | η) = Logit(τ_j - λ_k*η) - Logit(τ_{j-1} - λ_k*η)
+    Measurement Model (Ordered Probit):
+        P(I_k = j | η) = Φ(τ_j - λ_k*η) - Φ(τ_{j-1} - λ_k*η)
 
-    Choice:
+    Choice Model:
         B_FEE_i = B_FEE + B_FEE_LV * η
         V1 = ASC_paid + B_FEE_i * fee1 + B_DUR * dur1
         V2 = ASC_paid + B_FEE_i * fee2 + B_DUR * dur2
         V3 = B_FEE_i * fee3 + B_DUR * dur3
 
-    Likelihood:
+    Joint Likelihood:
         L_n = ∫ P(choice|η) × Π_k P(I_k|η) dη
 
     Estimated via Monte Carlo integration using Halton draws.
@@ -26,8 +27,9 @@ This eliminates attenuation bias from two-stage estimation by
 integrating over the latent variable distribution.
 
 References:
-    - Bierlaire (2018): Technical Report on Latent Variables in Biogeme
+    - Ben-Akiva et al. (2002): Hybrid Choice Models
     - Walker & Ben-Akiva (2002): Generalized Random Utility Model
+    - Bierlaire (2018): Biogeme Documentation on Latent Variables
 """
 
 import json
@@ -45,71 +47,64 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.policy_tools import run_policy_analysis
 from shared.latex_tools import generate_all_latex
+from shared import validate_required_columns, validate_coefficient_signs
 
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import (
-    Beta, Variable, MonteCarlo, log, exp, Elem, Draws
-)
+# Handle Biogeme API changes (bioDraws deprecated in 3.3+, use Draws)
+try:
+    from biogeme.expressions import Beta, Variable, Draws, MonteCarlo, log, exp, Elem, bioNormalCdf
+except ImportError:
+    from biogeme.expressions import Beta, Variable, bioDraws as Draws, MonteCarlo, log, exp, Elem, bioNormalCdf
+
+
+# Alternative availability (1=available, 0=not available)
+# This should match the alternatives defined in config.json
+ALTERNATIVES = {1: 'paid1', 2: 'paid2', 3: 'standard'}
+AV_DICT = {k: 1 for k in ALTERNATIVES.keys()}  # All alternatives available
 
 
 # =============================================================================
-# MEASUREMENT MODEL (Ordered Logit for Likert Items)
+# MEASUREMENT MODEL (Ordered Probit for Likert Items)
 # =============================================================================
 
-def ordered_logit_prob(indicator, loading, lv, thresholds):
+def ordered_probit_prob(indicator, loading, lv, tau1, tau2, tau3, tau4):
     """
-    Compute ordered logit probability for a single indicator.
+    Compute ordered probit probability for a single indicator.
 
-    P(I = j | η) = Logistic(τ_j - λ*η) - Logistic(τ_{j-1} - λ*η)
+    P(I = j | η) = Φ(τ_j - λ*η) - Φ(τ_{j-1} - λ*η)
+
+    Uses the normal CDF (probit) which is more common in the literature
+    and matches the DGP specification.
 
     Args:
         indicator: Biogeme Variable for the indicator (1-5)
         loading: Factor loading (λ)
         lv: Latent variable expression (η)
-        thresholds: List of threshold Beta parameters [τ_1, τ_2, τ_3, τ_4]
+        tau1-4: Threshold parameters (must be ordered)
 
     Returns:
         Biogeme expression for probability
     """
-    # Use logistic CDF: 1 / (1 + exp(-x))
-    def logistic_cdf(x):
-        return 1 / (1 + exp(-x))
+    z = loading * lv
 
-    # Compute cumulative probabilities at each threshold
-    # P(I <= j) = Logistic(τ_j - λ*η)
-    cum_probs = {}
-    for j in range(1, 6):  # Categories 1-5
-        if j == 1:
-            cum_probs[j] = logistic_cdf(thresholds[0] - loading * lv)
-        elif j == 2:
-            cum_probs[j] = logistic_cdf(thresholds[1] - loading * lv)
-        elif j == 3:
-            cum_probs[j] = logistic_cdf(thresholds[2] - loading * lv)
-        elif j == 4:
-            cum_probs[j] = logistic_cdf(thresholds[3] - loading * lv)
-        else:  # j == 5
-            cum_probs[j] = 1.0
-
-    # P(I = j) = P(I <= j) - P(I <= j-1)
-    category_probs = {}
-    category_probs[1] = cum_probs[1]
-    category_probs[2] = cum_probs[2] - cum_probs[1]
-    category_probs[3] = cum_probs[3] - cum_probs[2]
-    category_probs[4] = cum_probs[4] - cum_probs[3]
-    category_probs[5] = cum_probs[5] - cum_probs[4]
+    # Cumulative probabilities using normal CDF
+    prob_1 = bioNormalCdf(tau1 - z)
+    prob_2 = bioNormalCdf(tau2 - z) - bioNormalCdf(tau1 - z)
+    prob_3 = bioNormalCdf(tau3 - z) - bioNormalCdf(tau2 - z)
+    prob_4 = bioNormalCdf(tau4 - z) - bioNormalCdf(tau3 - z)
+    prob_5 = 1 - bioNormalCdf(tau4 - z)
 
     # Select probability based on observed indicator value
-    prob = Elem(category_probs, indicator)
+    prob = Elem({1: prob_1, 2: prob_2, 3: prob_3, 4: prob_4, 5: prob_5}, indicator)
 
     return prob
 
 
-def create_measurement_likelihood(lv,
-                                  items: list,
-                                  thresholds: list,
-                                  loadings: dict):
+def create_measurement_likelihood(lv, items: list,
+                                   tau1, tau2, tau3, tau4,
+                                   loadings: dict):
     """
     Create joint measurement likelihood for all indicators.
 
@@ -118,20 +113,19 @@ def create_measurement_likelihood(lv,
     Args:
         lv: Latent variable expression
         items: List of indicator column names
-        thresholds: List of threshold Beta parameters
-        loadings: Dict of item -> loading Beta parameter
+        tau1-4: Threshold parameters
+        loadings: Dict of item -> loading (Beta or float)
 
     Returns:
         Joint measurement probability expression
     """
-    # Start with probability of 1
     joint_prob = 1.0
 
     for item in items:
         indicator = Variable(item)
         loading = loadings[item]
 
-        prob = ordered_logit_prob(indicator, loading, lv, thresholds)
+        prob = ordered_probit_prob(indicator, loading, lv, tau1, tau2, tau3, tau4)
         joint_prob = joint_prob * prob
 
     return joint_prob
@@ -145,9 +139,15 @@ def create_iclv_model(database: db.Database, config: dict, available_columns: li
     """
     Create ICLV model with simultaneous estimation.
 
+    Key features:
+    1. Structural model: η = γ*X + σ*ω linking demographics to LV
+    2. Measurement model: Ordered probit for Likert items
+    3. Choice model: Logit with LV interaction on fee sensitivity
+    4. Integration: Monte Carlo over latent variable distribution
+
     Args:
         database: Biogeme database
-        config: Model configuration with LV items
+        config: Model configuration with LV items and structural parameters
         available_columns: List of available column names in the data
 
     Returns:
@@ -165,66 +165,90 @@ def create_iclv_model(database: db.Database, config: dict, available_columns: li
     dur3 = Variable('dur3')
 
     # -------------------------------------------------------------------------
-    # LATENT VARIABLE: Structural Equation
-    # η = σ * ω,  where ω ~ N(0,1)
+    # DEMOGRAPHICS (Centered)
     # -------------------------------------------------------------------------
-    # Random draw for latent variable
+    # Get centering value from config
+    latent_cfg = config.get('latent', {}).get('pat_blind', {})
+    structural_cfg = latent_cfg.get('structural', {})
+    age_center = structural_cfg.get('center', {}).get('age_idx', 2.0)
+
+    age_idx = Variable('age_idx')
+    age_centered = age_idx - age_center
+
+    # -------------------------------------------------------------------------
+    # STRUCTURAL MODEL: η = γ*X + σ*ω
+    # -------------------------------------------------------------------------
+    # Structural coefficients (linking demographics to latent variable)
+    gamma_age = Beta('gamma_age', 0.2, -2, 2, 0)
+    sigma_LV = Beta('sigma_LV', 1.0, 0.1, 5, 0)
+
+    # Random draw from standard normal (using Halton sequences for efficiency)
     omega = Draws('omega', 'NORMAL_HALTON2')
 
-    # Standard deviation of latent variable (normalized to 1 for identification)
-    sigma_LV = Beta('sigma_LV', 1.0, 0.01, 5.0, 1)  # Fixed to 1 for identification
-
-    # Latent variable
-    LV_pat_blind = sigma_LV * omega  # Simply ω since σ=1
+    # STRUCTURAL EQUATION: η = γ_age * age_centered + σ * ω
+    LV_pat_blind = gamma_age * age_centered + sigma_LV * omega
 
     # -------------------------------------------------------------------------
-    # MEASUREMENT MODEL: Ordered Logit for Likert Items
+    # MEASUREMENT MODEL: Ordered Probit for Likert Items
     # -------------------------------------------------------------------------
-    # Thresholds (shared across items, ordered constraints)
-    tau_1 = Beta('tau_1', -1.5, -5, 5, 0)
-    tau_2 = Beta('tau_2', -0.5, -5, 5, 0)
-    tau_3 = Beta('tau_3', 0.5, -5, 5, 0)
-    tau_4 = Beta('tau_4', 1.5, -5, 5, 0)
-    thresholds = [tau_1, tau_2, tau_3, tau_4]
+    # Delta parameterization for thresholds (GUARANTEES ordering)
+    # τ_1 is free, τ_k = τ_{k-1} + exp(δ_k) ensures τ_1 < τ_2 < τ_3 < τ_4
+    #
+    # NOTE ON DGP ALIGNMENT:
+    # The DGP uses FIXED thresholds [-1.0, -0.35, 0.35, 1.0] for simulation.
+    # Here we ESTIMATE thresholds, which is standard practice for real data.
+    # Starting values are initialized close to DGP values.
+    tau_1 = Beta('tau_1', -1.0, -3, 3, 0)
+    delta_2 = Beta('delta_2', 0.0, -3, 3, 0)  # exp(0) ≈ 1
+    delta_3 = Beta('delta_3', 0.0, -3, 3, 0)
+    delta_4 = Beta('delta_4', 0.0, -3, 3, 0)
+
+    # Compute ordered thresholds
+    tau_2 = tau_1 + exp(delta_2)
+    tau_3 = tau_2 + exp(delta_3)
+    tau_4 = tau_3 + exp(delta_4)
 
     # Get indicator items from config
-    latent_cfg = config.get('latent', {}).get('pat_blind', {})
     items = latent_cfg.get('measurement', {}).get('items', [])
 
     # Filter to available items in database
-    available_items = [item for item in items
-                       if item in available_columns]
+    available_items = [item for item in items if item in available_columns]
 
     if not available_items:
         raise ValueError("No indicator items found for pat_blind LV")
 
     print(f"  Using {len(available_items)} indicator items: {available_items}")
 
-    # Factor loadings (first fixed to 1 for identification)
+    # Factor loadings (first item fixed to 1.0 for scale identification)
+    # IMPORTANT: We explicitly fix the first item in lexicographic order to ensure
+    # consistent scale identification regardless of item ordering in the data.
     loadings = {}
-    loadings[available_items[0]] = 1.0  # First loading fixed
+    fixed_item = sorted(available_items)[0]  # Always fix the lexicographically first item
+    loadings[fixed_item] = 1.0
+    print(f"  Scale identification: λ({fixed_item}) = 1.0 (fixed)")
 
-    for item in available_items[1:]:
-        loadings[item] = Beta(f'lambda_{item}', 0.8, 0.01, 5.0, 0)
+    for item in available_items:
+        if item != fixed_item:
+            loadings[item] = Beta(f'lambda_{item}', 0.8, 0.1, 3.0, 0)
 
     # Build measurement likelihood
     measurement_prob = create_measurement_likelihood(
-        LV_pat_blind, available_items, thresholds, loadings
+        LV_pat_blind, available_items, tau_1, tau_2, tau_3, tau_4, loadings
     )
 
     # -------------------------------------------------------------------------
     # CHOICE MODEL
     # -------------------------------------------------------------------------
     # Base parameters
-    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
-    B_FEE = Beta('B_FEE', -0.5, -10, 0, 0)
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)
+    ASC_paid = Beta('ASC_paid', 5.0, -10, 15, 0)
+    B_FEE = Beta('B_FEE', -0.08, -1, 0, 0)
+    B_DUR = Beta('B_DUR', -0.08, -1, 0, 0)
 
     # LV effect on fee sensitivity
-    B_FEE_LV = Beta('B_FEE_PatBlind', 0.1, -2, 2, 0)
+    B_FEE_PatBlind = Beta('B_FEE_PatBlind', -0.1, -2, 2, 0)
 
-    # Individual-specific fee coefficient
-    B_FEE_i = B_FEE + B_FEE_LV * LV_pat_blind
+    # Individual-specific fee coefficient: β_i = β + β_LV * η_i
+    B_FEE_i = B_FEE + B_FEE_PatBlind * LV_pat_blind
 
     # Utility functions
     V1 = ASC_paid + B_FEE_i * fee1 + B_DUR * dur1
@@ -232,10 +256,9 @@ def create_iclv_model(database: db.Database, config: dict, available_columns: li
     V3 = B_FEE_i * fee3 + B_DUR * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Choice probability (conditional on LV)
-    choice_prob = models.logit(V, av, CHOICE)
+    choice_prob = models.logit(V, AV_DICT, CHOICE)
 
     # -------------------------------------------------------------------------
     # JOINT LIKELIHOOD WITH MONTE CARLO INTEGRATION
@@ -261,21 +284,25 @@ def prepare_data(filepath: Path, config: dict) -> pd.DataFrame:
     """Load and prepare data for ICLV estimation."""
     df = pd.read_csv(filepath)
 
+    # Base required columns
+    required_cols = ['CHOICE', 'fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3', 'age_idx']
+
+    # Add indicator items from config
+    latent_cfg = config.get('latent', {}).get('pat_blind', {})
+    items = latent_cfg.get('measurement', {}).get('items', [])
+    required_cols.extend(items)
+
+    # Validate required columns exist
+    validate_required_columns(df, required_cols, 'HCM_Basic')
+
     # Ensure fee columns are scaled
     if 'fee1_10k' not in df.columns:
         for alt in [1, 2, 3]:
             df[f'fee{alt}_10k'] = df[f'fee{alt}'] / 10000.0
 
-    # Convert Likert items to integers (1-5)
-    latent_cfg = config.get('latent', {}).get('pat_blind', {})
-    items = latent_cfg.get('measurement', {}).get('items', [])
-
     for item in items:
         if item in df.columns:
-            # Ensure integer values
-            df[item] = df[item].round().astype(int)
-            # Clip to valid range
-            df[item] = df[item].clip(1, 5)
+            df[item] = df[item].round().astype(int).clip(1, 5)
 
     # Keep only numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -286,7 +313,7 @@ def prepare_data(filepath: Path, config: dict) -> pd.DataFrame:
 # ESTIMATION
 # =============================================================================
 
-def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict:
+def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 500) -> dict:
     """
     Estimate HCM Basic model using simultaneous ICLV approach.
 
@@ -314,7 +341,11 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
         print("=" * 70)
         print(f"\nTrue parameters: {true_values}")
         print(f"\nUsing {n_draws} Halton draws for Monte Carlo integration")
-        print("\nThis approach eliminates attenuation bias from two-stage estimation!")
+        print("\nKey improvements over two-stage:")
+        print("  - Structural equation: η = γ*age + σ*ω (demographics → LV)")
+        print("  - Delta thresholds: τ_k = τ_{k-1} + exp(δ_k) (guaranteed ordering)")
+        print("  - Ordered probit: Φ(τ - λη) (matches DGP)")
+        print("  - Monte Carlo integration: eliminates attenuation bias")
 
     # Load and prepare data
     df = prepare_data(data_path, config)
@@ -325,9 +356,7 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
 
     # Create database
     database = db.Database('hcm_basic_iclv', df)
-
-    # Set number of draws
-    database.number_of_draws = n_draws
+    database.panel('ID')  # Declare panel structure for consistent random draws within individuals
 
     if verbose:
         print("\nBuilding ICLV model...")
@@ -335,12 +364,12 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
     # Create ICLV model
     logprob = create_iclv_model(database, config, df.columns.tolist())
 
-    # Create Biogeme object
-    biogeme_model = bio.BIOGEME(database, logprob)
+    # Create Biogeme object with draws
+    biogeme_model = bio.BIOGEME(database, logprob, number_of_draws=n_draws)
     biogeme_model.model_name = "HCM_Basic_ICLV"
 
     # Calculate null log-likelihood
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     original_dir = os.getcwd()
     os.chdir(results_dir)
@@ -353,6 +382,18 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
     finally:
         os.chdir(original_dir)
 
+    # Check convergence status
+    general_stats = results.get_general_statistics()
+    converged = True
+    for key, val in general_stats.items():
+        if 'Optimization' in key and 'algorithm' not in key.lower():
+            status = str(val[0]) if isinstance(val, tuple) else str(val)
+            if 'success' not in status.lower() and 'converged' not in status.lower():
+                converged = False
+                if verbose:
+                    print(f"\nWARNING: Optimization may not have converged! Status: {status}")
+                break
+
     # Extract results
     estimates_df = results.get_estimated_parameters()
     estimates_df = estimates_df.set_index('Name')
@@ -362,8 +403,11 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
     tstats = estimates_df['Robust t-stat.'].to_dict()
     pvals = estimates_df['Robust p-value'].to_dict()
 
-    # Get fit statistics
-    general_stats = results.get_general_statistics()
+    # Validate coefficient signs
+    if verbose:
+        validate_coefficient_signs(betas, model_name='HCM_Basic')
+
+    # Get fit statistics (reuse general_stats from convergence check)
     final_ll = None
     null_ll = None
     aic = None
@@ -404,15 +448,32 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
                 print(f"{param:<20} {betas[param]:>10.4f} {stderrs[param]:>10.4f} {tstats[param]:>10.2f} {pvals[param]:>10.4f} {sig}")
 
         print("\n" + "-" * 70)
+        print("STRUCTURAL MODEL PARAMETERS")
+        print("-" * 70)
+        struct_params = ['gamma_age', 'sigma_LV']
+        for param in struct_params:
+            if param in betas:
+                sig = "***" if pvals[param] < 0.01 else "**" if pvals[param] < 0.05 else "*" if pvals[param] < 0.10 else ""
+                print(f"{param:<20} {betas[param]:>10.4f} {stderrs[param]:>10.4f} {tstats[param]:>10.2f} {pvals[param]:>10.4f} {sig}")
+
+        print("\n" + "-" * 70)
         print("MEASUREMENT MODEL PARAMETERS")
         print("-" * 70)
 
-        # Thresholds
-        print("\nThresholds:")
-        for i in range(1, 5):
-            param = f'tau_{i}'
-            if param in betas:
-                print(f"  {param}: {betas[param]:.4f} (SE: {stderrs[param]:.4f})")
+        # Thresholds (show computed values)
+        print("\nThresholds (delta parameterization):")
+        if 'tau_1' in betas:
+            tau1 = betas['tau_1']
+            delta2 = betas.get('delta_2', 0)
+            delta3 = betas.get('delta_3', 0)
+            delta4 = betas.get('delta_4', 0)
+            tau2 = tau1 + np.exp(delta2)
+            tau3 = tau2 + np.exp(delta3)
+            tau4 = tau3 + np.exp(delta4)
+            print(f"  τ_1 = {tau1:.4f}")
+            print(f"  τ_2 = {tau2:.4f} (τ_1 + exp(δ_2))")
+            print(f"  τ_3 = {tau3:.4f} (τ_2 + exp(δ_3))")
+            print(f"  τ_4 = {tau4:.4f} (τ_3 + exp(δ_4))")
 
         # Loadings
         print("\nFactor Loadings:")
@@ -453,7 +514,7 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
         else:
             print("NOTE: Some parameters outside 95% CI")
 
-        print("\n*** ICLV eliminates attenuation bias - LV effects are unbiased! ***")
+        print("\n*** ICLV with structural equations provides unbiased LV effects! ***")
 
     # Save results
     results_dict = {
@@ -522,7 +583,7 @@ def estimate(model_dir: Path, verbose: bool = True, n_draws: int = 1000) -> dict
 def main():
     """Entry point for standalone execution."""
     model_dir = Path(__file__).parent
-    results = estimate(model_dir, n_draws=1000)
+    results = estimate(model_dir, n_draws=500)
 
     # Run policy analysis
     policy_dir = model_dir / 'policy_analysis'

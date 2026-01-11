@@ -5,7 +5,7 @@ Marginal Effects for DCM Models
 Compute marginal effects showing how choice probabilities change
 with unit changes in attributes.
 
-Key Formulas (Logit):
+Key Formulas (Standard Logit/MNL):
     Own marginal effect:
         ∂P_j/∂x_j = β * P_j * (1 - P_j)
 
@@ -17,7 +17,25 @@ Types of marginal effects:
 - AME: Average Marginal Effect (average individual effects)
 - MER: Marginal Effect at Representative values
 
-Author: DCM Research Team
+IMPORTANT LIMITATION FOR HCM/ICLV MODELS:
+=========================================
+These formulas are ONLY correct for standard MNL models. For HCM/ICLV models
+with latent variable interactions (e.g., B_FEE_i = B_FEE + B_FEE_LV * η):
+
+1. The effective coefficient varies: β_i = β + β_LV * η_i
+2. The marginal effect includes: ∂P/∂x = (β + β_LV * η) * P * (1-P)
+3. Need to integrate over the latent variable distribution
+
+For HCM/ICLV, use simulation-based marginal effects:
+- Draw η from its distribution (or use individual predicted values)
+- Compute marginal effect for each draw
+- Average across draws
+
+References:
+- Train (2009): Discrete Choice Methods with Simulation
+- Hensher et al. (2015): Applied Choice Analysis
+
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

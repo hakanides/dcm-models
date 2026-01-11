@@ -35,21 +35,34 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared.policy_tools import run_policy_analysis
 from shared.latex_tools import generate_all_latex
+from shared import validate_required_columns, validate_coefficient_signs
 
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable, log, MonteCarlo
-
+# Handle Biogeme API changes (bioDraws deprecated in 3.3+, use Draws)
 try:
-    from biogeme.expressions import Draws
+    from biogeme.expressions import Beta, Variable, log, MonteCarlo, Draws
+    USE_NEW_DRAWS_API = True
 except ImportError:
-    from biogeme.expressions import bioDraws as Draws
+    from biogeme.expressions import Beta, Variable, log, MonteCarlo, bioDraws as Draws
+    USE_NEW_DRAWS_API = False
+
+# Required columns for MXL Basic
+REQUIRED_COLUMNS = ['CHOICE', 'fee1', 'fee2', 'fee3', 'dur1', 'dur2', 'dur3']
+
+# Alternative availability (1=available, 0=not available)
+# This should match the alternatives defined in config.json
+ALTERNATIVES = {1: 'paid1', 2: 'paid2', 3: 'standard'}
+AV_DICT = {k: 1 for k in ALTERNATIVES.keys()}  # All alternatives available
 
 
 def prepare_data(filepath: Path) -> pd.DataFrame:
     """Load and prepare data for estimation."""
     df = pd.read_csv(filepath)
+
+    # Validate required columns exist
+    validate_required_columns(df, REQUIRED_COLUMNS, 'MXL_Basic')
 
     # Ensure fee columns are scaled
     if 'fee1_10k' not in df.columns:
@@ -72,16 +85,17 @@ def create_model(database: db.Database):
     dur2 = Variable('dur2')
     dur3 = Variable('dur3')
 
-    # Fixed parameters
-    ASC_paid = Beta('ASC_paid', 1.0, -10, 10, 0)
-    B_DUR = Beta('B_DUR', -0.05, -5, 0, 0)
+    # Fixed parameters - starting values aligned with DGP (config.json)
+    ASC_paid = Beta('ASC_paid', 5.0, -5, 10, 0)   # True: 5.0
+    B_DUR = Beta('B_DUR', -0.08, -1, 0, 0)        # True: -0.08
 
     # Random fee coefficient: B_FEE ~ N(mu, sigma^2)
-    B_FEE_MU = Beta('B_FEE_MU', -0.05, -10, 0, 0)
-    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.05, 0.001, 2, 0)
+    # Starting values from DGP
+    B_FEE_MU = Beta('B_FEE_MU', -0.08, -1, 0, 0)    # True: -0.08
+    B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.03, 0.0, 1, 0)  # True: 0.03
 
-    # Random coefficient
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
+    # Random coefficient (Halton sequences for better efficiency - Train 2003)
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL_HALTON2')
 
     # Utility functions
     V1 = ASC_paid + B_FEE_RND * fee1 + B_DUR * dur1
@@ -89,10 +103,9 @@ def create_model(database: db.Database):
     V3 = B_FEE_RND * fee3 + B_DUR * dur3
 
     V = {1: V1, 2: V2, 3: V3}
-    av = {1: 1, 2: 1, 3: 1}
 
     # Conditional logit probability
-    prob = models.logit(V, av, CHOICE)
+    prob = models.logit(V, AV_DICT, CHOICE)
 
     # Simulated log-likelihood
     logprob = log(MonteCarlo(prob))
@@ -123,21 +136,29 @@ def estimate(model_dir: Path, n_draws: int = 500, verbose: bool = True) -> dict:
     # Load and prepare data
     df = prepare_data(data_path)
     n_obs = len(df)
-    n_individuals = df['ID'].nunique() if 'ID' in df.columns else n_obs // 10
+
+    # Validate panel structure exists (required for MXL with repeated choices)
+    if 'ID' not in df.columns:
+        raise ValueError(
+            "MXL requires panel data with 'ID' column for correct standard errors. "
+            "Each individual should have multiple choice observations."
+        )
+    n_individuals = df['ID'].nunique()
 
     if verbose:
         print(f"Data: {n_obs} observations from {n_individuals} individuals")
         print(f"Simulation draws: {n_draws}")
 
-    # Create database
+    # Create database with panel structure for correct SE computation
     database = db.Database('mxl_basic', df)
+    database.panel('ID')  # Declare panel structure for cluster-robust inference
 
     # Create and estimate model
     logprob = create_model(database)
 
     biogeme_model = bio.BIOGEME(database, logprob, number_of_draws=n_draws)
     biogeme_model.model_name = "MXL_Basic"
-    biogeme_model.calculate_null_loglikelihood({1: 1, 2: 1, 3: 1})
+    biogeme_model.calculate_null_loglikelihood(AV_DICT)
 
     # Change to results dir for output files
     original_dir = os.getcwd()
@@ -151,6 +172,18 @@ def estimate(model_dir: Path, n_draws: int = 500, verbose: bool = True) -> dict:
     finally:
         os.chdir(original_dir)
 
+    # Check convergence status
+    general_stats = results.get_general_statistics()
+    converged = True
+    for key, val in general_stats.items():
+        if 'Optimization' in key and 'algorithm' not in key.lower():
+            status = str(val[0]) if isinstance(val, tuple) else str(val)
+            if 'success' not in status.lower() and 'converged' not in status.lower():
+                converged = False
+                if verbose:
+                    print(f"\nWARNING: Optimization may not have converged! Status: {status}")
+                break
+
     # Extract results
     estimates_df = results.get_estimated_parameters()
     estimates_df = estimates_df.set_index('Name')
@@ -160,8 +193,11 @@ def estimate(model_dir: Path, n_draws: int = 500, verbose: bool = True) -> dict:
     tstats = estimates_df['Robust t-stat.'].to_dict()
     pvals = estimates_df['Robust p-value'].to_dict()
 
-    # Get fit statistics
-    general_stats = results.get_general_statistics()
+    # Validate coefficient signs
+    if verbose:
+        validate_coefficient_signs(betas, model_name='MXL_Basic')
+
+    # Get fit statistics (reuse general_stats from convergence check)
     final_ll = None
     null_ll = None
     aic = None
@@ -203,11 +239,16 @@ def estimate(model_dir: Path, n_draws: int = 500, verbose: bool = True) -> dict:
                 print(f"{param:<14} {betas[param]:>10.4f} {stderrs[param]:>10.4f} {tstats[param]:>10.2f} {pvals[param]:>10.4f} {sig}")
 
         # Heterogeneity interpretation
+        # P(B_FEE > 0) = 1 - P(B_FEE < 0) = 1 - Phi((0 - mu)/sigma)
         if 'B_FEE_SIGMA' in betas and betas['B_FEE_SIGMA'] > 0.001:
             mu = betas['B_FEE_MU']
             sigma = betas['B_FEE_SIGMA']
-            pct_positive = 100 * stats.norm.cdf(0, loc=mu, scale=sigma)
-            print(f"\nHeterogeneity: {pct_positive:.1f}% of population has B_FEE > 0")
+            # stats.norm.cdf(0, loc=mu, scale=sigma) gives P(B_FEE < 0)
+            # So P(B_FEE > 0) = 1 - cdf(0)
+            pct_positive = 100 * (1 - stats.norm.cdf(0, loc=mu, scale=sigma))
+            pct_negative = 100 - pct_positive
+            print(f"\nHeterogeneity: {pct_negative:.1f}% of population has B_FEE < 0 (fee-sensitive)")
+            print(f"               {pct_positive:.1f}% of population has B_FEE > 0 (unusual preference)")
 
         # Compare to true parameters
         print("\n" + "=" * 70)

@@ -11,7 +11,7 @@ Key Capabilities:
 - Simulate share uncertainty via parameter draws
 - Individual-level predictions with aggregation
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

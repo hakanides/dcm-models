@@ -20,7 +20,7 @@ Methods:
 - Individual WTP: For models with heterogeneity (demographics, latent variables)
 - MXL distributions: For random coefficient models
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -93,7 +93,20 @@ class WTPCalculator:
     Willingness-to-Pay calculator for DCM models.
 
     Computes WTP as ratio of coefficients with proper uncertainty
-    quantification using delta method or simulation.
+    quantification using various methods.
+
+    RECOMMENDED METHOD: Use compute_wtp_robust() (Fieller's method) for
+    all WTP calculations. The delta method (compute_wtp) is statistically
+    invalid for ratio estimators because:
+    - The ratio of two normals follows a Cauchy-like distribution
+    - Standard errors are underestimated
+    - Confidence intervals have inadequate coverage (< 95%)
+
+    Available methods:
+    - compute_wtp_robust(): RECOMMENDED - Fieller's method with fallback
+    - compute_wtp_fieller(): Fieller's method for exact ratio CI
+    - compute_wtp_krinsky_robb(): Simulation-based bootstrap CI
+    - compute_wtp(): Delta method (NOT recommended, retained for comparison)
 
     Example:
         >>> result = EstimationResult(
@@ -101,7 +114,7 @@ class WTPCalculator:
         ...     std_errs={'B_FEE': 0.05, 'B_DUR': 0.02}
         ... )
         >>> calc = WTPCalculator(result)
-        >>> wtp = calc.compute_wtp('B_DUR')
+        >>> wtp = calc.compute_wtp_robust('B_DUR')  # Use Fieller method
         >>> print(f"WTP: {wtp.wtp_point:,.0f} TL/day")
     """
 
@@ -121,6 +134,50 @@ class WTPCalculator:
             self.result = result
 
         self.config = config or PolicyAnalysisConfig()
+
+    def compute(self,
+                numerator_param: str = None,
+                denominator_param: str = None,
+                scale_factor: float = None,
+                for_improvement: bool = True,
+                method: str = 'robust') -> WTPResult:
+        """
+        Main entry point for WTP calculation (defaults to robust Fieller method).
+
+        This is the RECOMMENDED method for WTP calculation. By default, it uses
+        Fieller's method which provides statistically valid confidence intervals
+        for ratio estimators.
+
+        The delta method (method='delta') is NOT recommended because:
+        - The ratio of two normals follows a Cauchy-like distribution
+        - Standard errors from delta method are underestimated
+        - Confidence intervals have inadequate coverage (< 95%)
+
+        Args:
+            numerator_param: Parameter for attribute (default: B_DUR)
+            denominator_param: Cost parameter (default: B_FEE)
+            scale_factor: Scale to apply (default: fee_scale from config)
+            for_improvement: If True, returns WTP for attribute improvement
+            method: 'robust' (default, Fieller), 'delta', 'fieller', or 'krinsky_robb'
+
+        Returns:
+            WTPResult with point estimate and confidence interval
+        """
+        if method == 'robust' or method == 'fieller':
+            return self.compute_wtp_robust(
+                numerator_param, denominator_param, scale_factor, for_improvement
+            )
+        elif method == 'delta':
+            return self.compute_wtp(
+                numerator_param, denominator_param, scale_factor, for_improvement
+            )
+        elif method == 'krinsky_robb':
+            return self.compute_wtp_krinsky_robb(
+                numerator_param, denominator_param, scale_factor,
+                for_improvement=for_improvement
+            )
+        else:
+            raise ValueError(f"Unknown method: {method}. Use 'robust', 'delta', 'fieller', or 'krinsky_robb'")
 
     def compute_wtp(self,
                     numerator_param: str = None,
@@ -147,6 +204,12 @@ class WTPCalculator:
         where g = [∂WTP/∂β_num, ∂WTP/∂β_denom]
               = [-scale/β_denom, β_num*scale/β_denom²]
 
+        IMPORTANT: The delta method assumes the ratio estimator is approximately
+        normal, which is invalid when the denominator (cost coefficient) is close
+        to zero. In such cases, WTP follows a heavy-tailed distribution and SEs
+        will be underestimated. For robust inference, use compute_wtp_fieller()
+        or compute_wtp_krinsky_robb() instead.
+
         Args:
             numerator_param: Parameter for attribute (default: B_DUR)
             denominator_param: Cost parameter (default: B_FEE)
@@ -168,6 +231,17 @@ class WTPCalculator:
 
         if beta_denom == 0:
             raise ValueError(f"Denominator parameter {denom_param} is zero")
+
+        # Warn if denominator is small relative to its SE (delta method unreliable)
+        se_denom = self.result.std_errs.get(denom_param, 0)
+        if se_denom > 0 and abs(beta_denom) < 2 * se_denom:
+            import warnings
+            warnings.warn(
+                f"Cost coefficient {denom_param} = {beta_denom:.4f} is not significantly "
+                f"different from zero (|t| < 2). Delta method SE may be unreliable. "
+                f"Consider using compute_wtp_fieller() for robust confidence intervals.",
+                UserWarning
+            )
 
         # Base formula: WTP = -β_num / β_denom * scale
         # This is WTP for a one-unit INCREASE in the attribute
@@ -207,6 +281,53 @@ class WTPCalculator:
             method='delta',
             scale_factor=scale
         )
+
+    def compute_wtp_robust(self,
+                           numerator_param: str = None,
+                           denominator_param: str = None,
+                           scale_factor: float = None,
+                           for_improvement: bool = True) -> WTPResult:
+        """
+        RECOMMENDED: Compute WTP using Fieller's method with Krinsky-Robb fallback.
+
+        This is the statistically correct method for ratio estimators like WTP.
+        Uses Fieller's method by default, which provides exact confidence
+        intervals for ratios of normally distributed estimators.
+
+        Falls back to Krinsky-Robb simulation if Fieller fails (e.g., when
+        the denominator is not significantly different from zero).
+
+        Why this method:
+        - Delta method is INVALID for ratios (assumes normality of ratio)
+        - Fieller provides exact CI by solving the correct quadratic
+        - Handles cases where cost coefficient is close to zero
+        - Krinsky-Robb provides robust simulation-based backup
+
+        Args:
+            numerator_param: Parameter for attribute (default: B_DUR)
+            denominator_param: Cost parameter (default: B_FEE)
+            scale_factor: Scale to apply (default: fee_scale from config)
+            for_improvement: If True (default), returns WTP for attribute
+                           improvement (positive WTP for beneficial changes).
+
+        Returns:
+            WTPResult with robust confidence interval
+        """
+        try:
+            return self.compute_wtp_fieller(
+                numerator_param, denominator_param, scale_factor, for_improvement
+            )
+        except Exception as e:
+            # Fallback to Krinsky-Robb simulation
+            import warnings
+            warnings.warn(
+                f"Fieller method failed ({e}), falling back to Krinsky-Robb simulation.",
+                UserWarning
+            )
+            return self.compute_wtp_krinsky_robb(
+                numerator_param, denominator_param, scale_factor,
+                n_draws=10000, for_improvement=for_improvement
+            )
 
     def compute_wtp_fieller(self,
                             numerator_param: str = None,
@@ -294,12 +415,17 @@ class WTPCalculator:
         theta_lower = (-b - sqrt_disc) / (2 * a)
         theta_upper = (-b + sqrt_disc) / (2 * a)
 
-        # Apply scale (the quadratic was for unscaled β_num/β_denom)
-        # Actually, we need to redo with scaled version
-        # WTP = -β_num/β_denom * scale, so θ = -β_num/β_denom
-        # CI bounds are for θ, multiply by -scale to get WTP
-
-        ci_lower = -theta_upper * scale  # Note: signs flip due to negative
+        # Apply scale to get WTP confidence interval
+        # The quadratic solves for θ = β_num/β_denom (unscaled ratio)
+        # WTP = -θ * scale = -(β_num/β_denom) * scale
+        #
+        # Since scale is a positive constant, the transformation is:
+        #   CI(WTP) = [-θ_upper * scale, -θ_lower * scale]
+        #
+        # The negation reverses the order of bounds, hence:
+        #   ci_lower = -theta_upper * scale
+        #   ci_upper = -theta_lower * scale
+        ci_lower = -theta_upper * scale
         ci_upper = -theta_lower * scale
 
         # Ensure lower < upper

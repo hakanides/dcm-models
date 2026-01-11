@@ -64,3 +64,16 @@ biogeme.toml
 # Isolated model outputs (regeneratable)
 models/*/data/
 models/*/results/
+models/*/output/
+models/*/policy_analysis/
+models/*/sample_stats/
+
+# Biogeme auto-generated files in model directories (keep biogeme.toml for reproducibility)
+models/*/*.pickle
+models/*/*.html
+models/*/*.parquet
+
+# Full model outputs (regeneratable)
+full_model/data/simulated/
+full_model/results/
+full_model/output/

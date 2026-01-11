@@ -1,11 +1,15 @@
 {
   "model_info": {
-    "name": "HCM Full",
-    "description": "Hybrid Choice Model with all 4 latent variables affecting fee and duration sensitivity",
+    "name": "HCM Full (ICLV)",
+    "description": "Hybrid Choice Model with all 4 latent variables. Uses simultaneous ICLV estimation with structural equations linking demographics to latent variables.",
     "parameters": [
       "ASC_paid", "B_FEE", "B_DUR",
       "B_FEE_PatBlind", "B_FEE_PatConst", "B_FEE_SecDL", "B_FEE_SecFP",
-      "B_DUR_PatBlind", "B_DUR_PatConst", "B_DUR_SecDL", "B_DUR_SecFP"
+      "B_DUR_PatBlind", "B_DUR_PatConst", "B_DUR_SecDL", "B_DUR_SecFP",
+      "gamma_pb_age", "gamma_pb_inc", "sigma_pb",
+      "gamma_pc_edu", "sigma_pc",
+      "gamma_sdl_edu", "gamma_sdl_inc", "sigma_sdl",
+      "gamma_sfp_edu", "sigma_sfp"
     ],
     "true_values": {
       "ASC_paid": 5.0,
@@ -14,21 +18,33 @@
       "B_FEE_PatConst": -0.04,
       "B_FEE_SecDL": 0.05,
       "B_FEE_SecFP": 0.04,
-      "B_DUR": -0.08,
+      "B_DUR": -0.12,
       "B_DUR_PatBlind": 0.06,
       "B_DUR_PatConst": 0.04,
       "B_DUR_SecDL": -0.05,
-      "B_DUR_SecFP": -0.04
+      "B_DUR_SecFP": -0.04,
+      "gamma_pb_age": 0.20,
+      "gamma_pb_inc": -0.15,
+      "sigma_pb": 1.0,
+      "gamma_pc_edu": 0.25,
+      "sigma_pc": 1.0,
+      "gamma_sdl_edu": 0.18,
+      "gamma_sdl_inc": 0.12,
+      "sigma_sdl": 1.0,
+      "gamma_sfp_edu": 0.20,
+      "sigma_sfp": 1.0
     },
-    "note": "Two-stage estimation causes attenuation bias on all LV effects"
+    "note": "Simultaneous ICLV eliminates attenuation bias. Structural equations: η_k = Γ_k*X + σ_k*ω_k"
   },
   "population": {
-    "N": 500,
+    "N": 1200,
     "T": 10,
-    "seed": 42
+    "seed": 42,
+    "sample_with_replacement": true,
+    "_note": "N>=1000 recommended for complex ICLV with 4 LVs per Train (2009)"
   },
   "design": {
-    "path": "../../full_model/data/raw/scenarios_prepared.csv"
+    "path": "../shared/data/scenarios.csv"
   },
   "demographics": {
     "age_idx": {
@@ -128,7 +144,7 @@
         "name": "B_DUR",
         "attribute": "dur",
         "apply_to": ["paid1", "paid2", "standard"],
-        "base_coef": -0.08,
+        "base_coef": -0.12,
         "interactions": [
           {"with": "pat_blind", "coef": 0.06, "type": "latent"},
           {"with": "pat_constructive", "coef": 0.04, "type": "latent"},

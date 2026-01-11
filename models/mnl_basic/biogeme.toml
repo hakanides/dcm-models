@@ -1,11 +1,14 @@
 # Default parameter file for Biogeme 3.3.1
-# Automatically created on January 09, 2026. 07:21:15
+# Automatically created on January 10, 2026. 20:41:26
 
-[MonteCarlo]
-number_of_draws = 10000 # int: Number of draws for Monte-Carlo integration.
-seed = 0 # int: Seed used for the pseudo-random number generation. It is useful
-         # only when each run should generate the exact same result. If 0, a new
-         # seed is used at each run.
+[TrustRegion]
+dogleg = "True" # bool: choice of the method to solve the trust region subproblem.
+                # True: dogleg. False: truncated conjugate gradient.
+
+[MultiThreading]
+number_of_threads = 0 # int: Number of threads/processors to be used. If the
+                      # parameter is 0, the number of available threads is
+                      # calculated using cpu_count().
 
 [SimpleBounds]
 second_derivatives = 1.0 # float: proportion (between 0 and 1) of iterations when
@@ -26,20 +29,18 @@ steptol = 3.666852862501036e-11 # The algorithm stops when the relative change i
 enlarging_factor = 10 # If an iteration is very successful, the radius of the
                       # trust region is multiplied by this factor
 
-[Specification]
-missing_data = 99999 # number: If one variable has this value, it is assumed that
-                     # a data is missing and an exception will be triggered.
-numerically_safe = "False" # If true, Biogeme is doing its best to deal with
-                           # numerical issues, such as division by a number close
-                           # to zero, at the possible expense of speed.
-use_jit = "True" # If True, the model is compiled using jit (just-in-time) to speed
-                 # up the calculation. For complex models, compilation time may
-                 # exceed the gain due to compilation, so that it is worth
-                 # turning it off.
-
-[TrustRegion]
-dogleg = "True" # bool: choice of the method to solve the trust region subproblem.
-                # True: dogleg. False: truncated conjugate gradient.
+[AssistedSpecification]
+maximum_number_parameters = 50 # int: maximum number of parameters allowed in a
+                               # model. Each specification with a higher number
+                               # is deemed invalid and not estimated.
+number_of_neighbors = 20 # int: maximum number of neighbors that are visited by
+                         # the VNS algorithm.
+largest_neighborhood = 20 # int: size of the largest neighborhood copnsidered by
+                          # the Variable Neighborhood Search (VNS) algorithm.
+maximum_attempts = 100 # int: an attempts consists in selecting a solution in the
+                       # Pareto set, and trying to improve it. The parameter
+                       # imposes an upper bound on the total number of attempts,
+                       # irrespectively if they are successful or not.
 
 [Output]
 identification_threshold = 1e-05 # float: if the smallest eigenvalue of the
@@ -57,28 +58,6 @@ generate_yaml = "True" # bool: "True" if the yaml file with the results must be
                        # generated.
 save_validation_results = "True" # bool: "True" if the validation results are saved
                                  # in CSV files.
-
-[Biogeme]
-version = "3.3.1" # Version of Biogeme that created the TOML file. Do not modify
-                  # this value.
-
-[MultiThreading]
-number_of_threads = 0 # int: Number of threads/processors to be used. If the
-                      # parameter is 0, the number of available threads is
-                      # calculated using cpu_count().
-
-[AssistedSpecification]
-maximum_number_parameters = 50 # int: maximum number of parameters allowed in a
-                               # model. Each specification with a higher number
-                               # is deemed invalid and not estimated.
-number_of_neighbors = 20 # int: maximum number of neighbors that are visited by
-                         # the VNS algorithm.
-largest_neighborhood = 20 # int: size of the largest neighborhood copnsidered by
-                          # the Variable Neighborhood Search (VNS) algorithm.
-maximum_attempts = 100 # int: an attempts consists in selecting a solution in the
-                       # Pareto set, and trying to improve it. The parameter
-                       # imposes an upper bound on the total number of attempts,
-                       # irrespectively if they are successful or not.
 
 [Estimation]
 bootstrap_samples = 100 # int: number of re-estimations for bootstrap sampling.
@@ -108,6 +87,27 @@ optimization_algorithm = "automatic" # str: optimization algorithm to be used fo
                                      # 'LS-BFGS', 'TR-BFGS', 'simple_bounds',
                                      # 'simple_bounds_newton',
                                      # 'simple_bounds_BFGS']
+
+[Specification]
+missing_data = 99999 # number: If one variable has this value, it is assumed that
+                     # a data is missing and an exception will be triggered.
+numerically_safe = "False" # If true, Biogeme is doing its best to deal with
+                           # numerical issues, such as division by a number close
+                           # to zero, at the possible expense of speed.
+use_jit = "True" # If True, the model is compiled using jit (just-in-time) to speed
+                 # up the calculation. For complex models, compilation time may
+                 # exceed the gain due to compilation, so that it is worth
+                 # turning it off.
+
+[Biogeme]
+version = "3.3.1" # Version of Biogeme that created the TOML file. Do not modify
+                  # this value.
+
+[MonteCarlo]
+number_of_draws = 10000 # int: Number of draws for Monte-Carlo integration.
+seed = 0 # int: Seed used for the pseudo-random number generation. It is useful
+         # only when each run should generate the exact same result. If 0, a new
+         # seed is used at each run.
 
 [Bootstrap]
 number_of_jobs = 2 # int: The maximum number of concurrently running jobs. If -1

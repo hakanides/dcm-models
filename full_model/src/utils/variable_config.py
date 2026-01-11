@@ -30,7 +30,7 @@ To migrate existing code:
 2. Replace hardcoded Variable() calls with config.create_biogeme_variables()
 3. Use the returned dict to access variables by name and alternative index
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 from dataclasses import dataclass, field

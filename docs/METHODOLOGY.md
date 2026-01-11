@@ -111,9 +111,16 @@ The framework implements a progression of models from simple to complex:
 | MNL Basic | 3 | None (homogeneous) | MLE | N/A |
 | MNL Demographics | 8 | Observable (demographics) | MLE | N/A |
 | MXL Basic | 4-6 | Unobserved (random β) | SML | N/A |
-| HCM Basic | 5-8 | Latent variables | Two-stage | 15-30% |
-| HCM Full | 13+ | 4 latent variables | Two-stage | 15-30% |
+| HCM Basic | 6-8 | Latent variables | Simultaneous ICLV | ~0% |
+| HCM Full | 20+ | 4 latent variables | Simultaneous ICLV | ~0% |
 | ICLV | 10-30 | Latent variables | Simultaneous SML | ~0% |
+
+**Important Terminology:**
+- **HCM (Hybrid Choice Model)**: General framework name for any discrete choice model that incorporates latent psychological constructs
+- **ICLV (Integrated Choice and Latent Variable)**: The correct estimation method for HCM that integrates over the latent variable distribution, eliminating attenuation bias
+- **Two-Stage**: An approximate method (NOT proper HCM) that treats estimated LV scores as error-free, causing 15-50% attenuation bias
+
+All HCM models in this framework use **simultaneous ICLV estimation** with structural equations linking demographics to latent variables.
 
 ### 2.2 MNL Basic
 
@@ -151,25 +158,52 @@ Allows coefficients to vary across individuals:
 
 ### 2.5 Hybrid Choice Model (HCM)
 
-Incorporates latent psychological constructs:
+Incorporates latent psychological constructs with **structural equations** linking demographics to latent variables:
 
+**Structural Model (Demographics → Latent Variable):**
 ```
-V_paid = ASC_paid + B_FEE × fee + B_FEE_LV × η_patblind × fee + B_DUR × duration
-```
-
-Where `η_patblind` is the latent "Patriotism/Blind Trust" variable
-
-**Problem**: Two-stage estimation causes attenuation bias (see Section 5)
-
-### 2.6 ICLV (Integrated Choice and Latent Variable)
-
-Simultaneously estimates measurement, structural, and choice models:
-
-```
-Joint likelihood: L_n = ∫ P(choice|η) × P(indicators|η) × f(η) dη
+η_m = Γ_m0 + Σ_p γ_mp × (X_p - X̄_p) + σ_m × ω_m
 ```
 
-**Advantage**: Unbiased latent variable coefficient estimates
+Where:
+- `γ_mp` = effect of demographic p on latent variable m
+- `X̄_p` = centering value for demographic p
+- `σ_m` = standard deviation of latent variable m
+- `ω_m ~ N(0,1)` = random component
+
+**Choice Model (Latent Variable → Utility):**
+```
+V_paid = ASC_paid + (B_FEE + B_FEE_LV × η_m) × fee + B_DUR × duration
+```
+
+**Measurement Model (Latent Variable → Indicators):**
+```
+P(I_k = j | η) = Φ(τ_j - λ_k × η) - Φ(τ_{j-1} - λ_k × η)
+```
+
+**Implementation**: This framework uses simultaneous ICLV estimation, eliminating attenuation bias. The joint likelihood integrates over the latent variable distribution (see Section 6).
+
+### 2.6 ICLV Estimation Method
+
+ICLV is the **estimation method** (not a separate model type) that simultaneously estimates measurement, structural, and choice models:
+
+```
+Joint likelihood: L_n = ∫ P(choice|η) × Π_k P(I_k|η) × f(η|X) dη
+```
+
+**Key Components:**
+1. **Structural model**: η = Γ×X + σ×ω defines how demographics affect latent variables
+2. **Measurement model**: Links latent variables to observable Likert indicators via ordered probit
+3. **Choice model**: Includes latent variable effects on utility
+
+**Monte Carlo Integration:**
+```
+L̂_n = (1/R) Σ_r [ P(choice|η_r) × Π_k P(I_k|η_r) ]
+```
+
+Where draws use Halton sequences (NORMAL_HALTON2, NORMAL_HALTON3, etc.) for efficient coverage.
+
+**Advantage**: Unbiased latent variable coefficient estimates because measurement error is explicitly modeled
 
 ---
 

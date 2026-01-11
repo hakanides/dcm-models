@@ -14,7 +14,7 @@ Key Features:
 - Automatic convergence management with strategy escalation
 - Smart starting value generation
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

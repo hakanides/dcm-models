@@ -12,7 +12,7 @@ Usage:
     results = biogeme_obj.estimate()
     generate_latex_output(results, 'MNL-Basic')
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 from pathlib import Path

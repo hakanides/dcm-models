@@ -15,7 +15,7 @@ Methodological Notes:
 - Tests check bias (estimated - true) against 2 standard errors
 - More stringent tests check coverage probability via Monte Carlo
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import pytest
@@ -31,23 +31,56 @@ sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 
 
 # =============================================================================
-# True Parameter Constants
+# True Parameter Loading (Dynamic from Config)
 # =============================================================================
 
-TRUE_PARAMS = {
-    'ASC_paid': 2.0,
-    'B_FEE': -0.5,  # Per 10k TL
-    'B_DUR': -0.025,
-    'B_FEE_PatBlind': 0.15,
+def load_true_params(config_path: Path = None) -> dict:
+    """
+    Load true parameters from config.json file.
+
+    This ensures tests use the same true values as the DGP,
+    avoiding hardcoded parameter mismatches.
+
+    Args:
+        config_path: Path to config.json. If None, uses default MNL basic.
+
+    Returns:
+        Dictionary of true parameter values
+    """
+    import json
+
+    if config_path is None:
+        # Default: use MNL basic config
+        config_path = PROJECT_ROOT.parent / 'models' / 'mnl_basic' / 'config.json'
+
+    if config_path.exists():
+        with open(config_path) as f:
+            config = json.load(f)
+        return config.get('model_info', {}).get('true_values', {})
+    else:
+        # Fallback to hardcoded values if config not found
+        import warnings
+        warnings.warn(f"Config not found at {config_path}, using default TRUE_PARAMS")
+        return _DEFAULT_TRUE_PARAMS
+
+
+# Fallback hardcoded values (used if config.json not found)
+_DEFAULT_TRUE_PARAMS = {
+    'ASC_paid': 5.0,
+    'B_FEE': -0.08,  # Per 10k TL
+    'B_DUR': -0.08,
+    'B_FEE_PatBlind': -0.10,
     # Structural model parameters
-    'gamma_pat_blind_age': 0.15,
-    'gamma_pat_blind_income': -0.10,
+    'gamma_age': 0.20,
+    'sigma_LV': 1.0,
     # Measurement model (loadings)
     'lambda_pat_blind_1': 1.0,  # Fixed for identification
-    'lambda_pat_blind_2': 0.85,
-    'lambda_pat_blind_3': 0.78,
-    'lambda_pat_blind_4': 0.72,
+    'lambda_pat_blind_2': 0.83,
+    'lambda_pat_blind_3': 0.81,
 }
+
+# Load TRUE_PARAMS at module import (can be overridden per test)
+TRUE_PARAMS = load_true_params()
 
 
 # =============================================================================

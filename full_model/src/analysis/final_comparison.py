@@ -7,7 +7,7 @@ Compares all estimated models:
 - MXL models (3 specifications)
 - HCM models (15 specifications)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse

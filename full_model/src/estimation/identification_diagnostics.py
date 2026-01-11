@@ -17,7 +17,7 @@ Usage:
     report = diag.full_report()
     diag.print_report()
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -39,9 +39,14 @@ class IdentificationDiagnostics:
     """
 
     # Thresholds for diagnostics
-    EIGENVALUE_THRESHOLD = 1e-5       # Below this = near-singular
-    CONDITION_THRESHOLD = 1e6         # Above this = ill-conditioned
-    CORRELATION_THRESHOLD = 0.95      # Above this = high correlation
+    # References:
+    # - Greene (2018): Econometric Analysis, Ch. 4
+    # - Belsley et al. (1980): Regression Diagnostics
+    EIGENVALUE_THRESHOLD = 1e-4       # Below this = near-singular (stricter than 1e-5)
+    CONDITION_THRESHOLD = 1e4         # Above this = ill-conditioned (stricter than 1e6)
+    # Correlation threshold: 0.85 detects multicollinearity earlier
+    # Literature suggests: 0.8-0.9 for warning, >0.9 for severe
+    CORRELATION_THRESHOLD = 0.85      # Above this = high correlation (was 0.95)
     SE_RATIO_THRESHOLD = 10.0         # SE > value * 10 = poorly identified
 
     def __init__(self, results):

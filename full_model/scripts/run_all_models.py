@@ -129,7 +129,11 @@ else:
 import biogeme.database as db
 import biogeme.biogeme as bio
 from biogeme import models
-from biogeme.expressions import Beta, Variable, bioDraws, MonteCarlo, log, PanelLikelihoodTrajectory
+# Handle Biogeme API changes (bioDraws deprecated in 3.3+, use Draws)
+try:
+    from biogeme.expressions import Beta, Variable, Draws, MonteCarlo, log, PanelLikelihoodTrajectory
+except ImportError:
+    from biogeme.expressions import Beta, Variable, bioDraws as Draws, MonteCarlo, log, PanelLikelihoodTrajectory
 
 from src.utils.latex_output import (
     generate_latex_output,
@@ -844,7 +848,7 @@ def model_mxl_random_fee(database):
     # Upper bound 1.5 allows heterogeneity while keeping most draws negative
     B_FEE_SIGMA = Beta('B_FEE_SIGMA', 0.2, 0.001, 1.5, 0)  # Bounded positive, realistic
 
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
 
     V1 = ASC_paid + B_FEE_RND * fee1 + B_DUR * dur1
     V2 = ASC_paid + B_FEE_RND * fee2 + B_DUR * dur2
@@ -877,8 +881,8 @@ def model_mxl_random_both(database):
     # Duration sigma bounded accordingly
     B_DUR_SIGMA = Beta('B_DUR_SIGMA', 0.02, 0.001, 0.5, 0)  # Bounded positive
 
-    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * bioDraws('B_FEE_RND', 'NORMAL')
-    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * bioDraws('B_DUR_RND', 'NORMAL')
+    B_FEE_RND = B_FEE_MU + B_FEE_SIGMA * Draws('B_FEE_RND', 'NORMAL')
+    B_DUR_RND = B_DUR_MU + B_DUR_SIGMA * Draws('B_DUR_RND', 'NORMAL')
 
     V1 = ASC_paid + B_FEE_RND * fee1 + B_DUR_RND * dur1
     V2 = ASC_paid + B_FEE_RND * fee2 + B_DUR_RND * dur2

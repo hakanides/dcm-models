@@ -28,8 +28,8 @@ Usage:
     # After model estimation
     result = {'betas': {...}, 'std_errs': {...}}
 
-    # WTP analysis
-    wtp = WTPCalculator(result).compute_wtp()
+    # WTP analysis (defaults to Fieller method for statistically valid CIs)
+    wtp = WTPCalculator(result).compute()  # or .compute_wtp_robust()
 
     # Elasticity analysis
     eta = ElasticityCalculator(result).own_price_elasticity(scenario, alternative=0)
@@ -40,7 +40,7 @@ Usage:
     # Welfare analysis
     cv = WelfareAnalyzer(result).compute_compensating_variation(baseline, policy)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 # Base classes and utilities
@@ -66,7 +66,8 @@ from .wtp import (
 from .elasticity import (
     ElasticityCalculator,
     ElasticityResult,
-    arc_elasticity
+    arc_elasticity,
+    compute_hcm_elasticity  # Simulation-based elasticity for HCM/ICLV models
 )
 
 # Marginal effects
@@ -109,6 +110,7 @@ __all__ = [
     'ElasticityCalculator',
     'ElasticityResult',
     'arc_elasticity',
+    'compute_hcm_elasticity',
 
     # Marginal Effects
     'MarginalEffectCalculator',

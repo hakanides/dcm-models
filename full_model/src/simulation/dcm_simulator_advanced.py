@@ -32,7 +32,7 @@ This implements a full Integrated Choice and Latent Variable (ICLV) model:
     │                      Mixed Logit                                │
     └─────────────────────────────────────────────────────────────────┘
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import json
@@ -539,15 +539,40 @@ class RandomCoefficientsHandler:
                 random_draws[name] = spec.std * correlated_z[idx]
 
             elif spec.distribution == Distribution.LOGNORMAL:
-                # Transform: if X ~ N(0,1), then exp(μ + σX) ~ LogN
-                # We want mean and variance of lognormal, not underlying normal
+                # Lognormal random coefficient
+                # We parameterize by the desired mean and std of the coefficient distribution
+                #
+                # CRITICAL: For consistency with other distributions, we return a
+                # ZERO-MEAN random component η, not the full coefficient.
+                # The systematic mean is added separately in _combine_taste_parameters():
+                #   β_i = β_systematic + η_i, where E[η_i] = 0
+                #
+                # For lognormal: X ~ LogN(μ_u, σ_u²) has E[X] = exp(μ_u + σ_u²/2)
+                # So centered: η = X - E[X]
                 var = spec.std ** 2
                 if spec.mean > 0:
+                    # Standard lognormal for positive coefficients
                     mu_u = np.log(spec.mean ** 2 / np.sqrt(var + spec.mean ** 2))
                     sigma_u = np.sqrt(np.log(1 + var / spec.mean ** 2))
-                    random_draws[name] = np.exp(mu_u + sigma_u * correlated_z[idx]) - spec.mean
+                    # Raw lognormal draw
+                    raw_lognormal = np.exp(mu_u + sigma_u * correlated_z[idx])
+                    # Center at zero: η = X - E[X] where E[X] = exp(μ_u + σ_u²/2)
+                    expected_value = np.exp(mu_u + sigma_u ** 2 / 2)
+                    random_draws[name] = raw_lognormal - expected_value
+                elif spec.mean < 0:
+                    # NEGATIVE lognormal: -exp(normal) is always negative
+                    # Parameterize using |mean| and std
+                    abs_mean = abs(spec.mean)
+                    mu_u = np.log(abs_mean ** 2 / np.sqrt(var + abs_mean ** 2))
+                    sigma_u = np.sqrt(np.log(1 + var / abs_mean ** 2))
+                    # Raw negative lognormal draw
+                    raw_neg_lognormal = -np.exp(mu_u + sigma_u * correlated_z[idx])
+                    # Center at zero: η = X - E[X] where E[X] = -exp(μ_u + σ_u²/2)
+                    expected_value = -np.exp(mu_u + sigma_u ** 2 / 2)
+                    random_draws[name] = raw_neg_lognormal - expected_value
                 else:
-                    random_draws[name] = 0.0
+                    # mean = 0: use normal instead (lognormal undefined for mean 0)
+                    random_draws[name] = spec.std * correlated_z[idx]
 
             elif spec.distribution == Distribution.TRIANGULAR:
                 # Use inverse CDF transform
@@ -785,12 +810,18 @@ class Population:
 
                 beta += coef * z
 
-            # Sign enforcement on total systematic beta (BEFORE random term)
-            # NOTE: This ensures the MEAN is correctly signed, but individual
-            # coefficients may flip sign if random variation is large enough.
-            # This is intentional - enforcing signs AFTER adding random terms
-            # would truncate the distribution and distort heterogeneity estimates.
-            # For strictly signed coefficients, use lognormal distributions instead.
+            # Sign enforcement on systematic beta
+            # NOTE: This ensures the SYSTEMATIC component has the correct sign.
+            # Individual coefficients may cross zero if random variation is large.
+            #
+            # BEST PRACTICE for strictly-signed coefficients:
+            # - Use Distribution.LOGNORMAL for positive means (always positive)
+            # - Use Distribution.LOGNORMAL for negative means (always negative, -exp())
+            # - Or use 'enforce_sign_final': true to enforce after random term (truncates)
+            #
+            # References:
+            # - Train (2009): Discrete Choice Methods with Simulation, Ch. 6
+            # - Hensher et al. (2015): Applied Choice Analysis, 2nd ed.
             enforce = term_spec.get('enforce_sign')
             if enforce == 'positive':
                 beta = abs(beta)
@@ -826,16 +857,19 @@ class Population:
             # Add random part if specified
             eta = random_draws.get(term_name, 0.0)
 
-            # Combine
+            # Combine: β_i = β_systematic + η_i
             beta = beta_sys + eta
 
-            # Final sign enforcement (optional - may want to allow sign flipping in mixed logit)
-            # Uncomment below to enforce signs on final combined beta
-            # enforce = term_spec.get('enforce_sign')
-            # if enforce == 'positive':
-            #     beta = abs(beta)
-            # elif enforce == 'negative':
-            #     beta = -abs(beta)
+            # Optional final sign enforcement (truncates distribution)
+            # Enable with 'enforce_sign_final': true in term_spec
+            # WARNING: This truncates the distribution and may bias variance estimates
+            # Prefer using bounded distributions (lognormal, truncated_normal) instead
+            if term_spec.get('enforce_sign_final', False):
+                enforce = term_spec.get('enforce_sign')
+                if enforce == 'positive':
+                    beta = max(0.0, beta)  # Truncate at 0
+                elif enforce == 'negative':
+                    beta = min(0.0, beta)  # Truncate at 0
 
             combined[term_name] = beta
 

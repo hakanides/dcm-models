@@ -366,9 +366,24 @@ V_j = ASC_paid + B_FEE_i x fee_j + B_DUR x dur_j
 
 ## HCM/ICLV Models
 
-### File: `src/models/hcm_split_latents.py`
+### Terminology Clarification
 
-The Hybrid Choice Model (HCM), also known as Integrated Choice and Latent Variable (ICLV), integrates psychological constructs into the choice model.
+- **HCM (Hybrid Choice Model)**: General framework name for any discrete choice model incorporating latent psychological constructs
+- **ICLV (Integrated Choice and Latent Variable)**: The correct estimation method for HCM that integrates over the latent variable distribution, eliminating attenuation bias
+
+**Important:** All HCM models in the `models/` folder now use simultaneous ICLV estimation. The files `hcm_split_latents.py` and `hcm_extended.py` in `full_model/src/models/` use a deprecated two-stage approach and are kept for reference only.
+
+### Key HCM Model Files
+
+| File | Location | Estimation | Status |
+|------|----------|------------|--------|
+| `model.py` | `models/hcm_basic/` | Simultaneous ICLV | Current |
+| `model.py` | `models/hcm_full/` | Simultaneous ICLV | Current |
+| `model.py` | `models/iclv/` | Simultaneous ICLV | Current |
+| `hcm_split_latents.py` | `full_model/src/models/` | Two-stage (biased) | Deprecated |
+| `hcm_extended.py` | `full_model/src/models/` | Two-stage (biased) | Deprecated |
+
+The Hybrid Choice Model (HCM) integrates psychological constructs into the choice model using simultaneous estimation.
 
 ### Framework
 
@@ -731,9 +746,37 @@ print(f"Mean attenuation: {summary['mean_attenuation_%']:.1f}%")
 
 ## Latent Variable Estimation
 
-### Confirmatory Factor Analysis (CFA) Approach
+### Simultaneous ICLV Estimation (Recommended)
 
-The project uses a weighted sum score approach for LV estimation:
+The current implementation uses simultaneous ICLV estimation, which integrates the structural, measurement, and choice models:
+
+**Structural Model:**
+```
+η_m = γ_m0 + Σ_p γ_mp × (X_p - X̄_p) + σ_m × ω_m
+```
+
+Where:
+- `γ_mp` = effect of demographic p on latent variable m
+- `X̄_p` = centering value for demographic p
+- `σ_m` = standard deviation of latent variable m
+- `ω_m ~ N(0,1)` = random component (integrated via Monte Carlo)
+
+**Delta Parameterization for Thresholds:**
+```python
+tau_1 = Beta('tau_1', -1.0, -3, 3, 0)
+delta_2 = Beta('delta_2', 0.6, -3, 3, 0)
+delta_3 = Beta('delta_3', 0.6, -3, 3, 0)
+delta_4 = Beta('delta_4', 0.6, -3, 3, 0)
+
+# Guaranteed ordering
+tau_2 = tau_1 + exp(delta_2)  # tau_2 > tau_1 always
+tau_3 = tau_2 + exp(delta_3)  # tau_3 > tau_2 always
+tau_4 = tau_3 + exp(delta_4)  # tau_4 > tau_3 always
+```
+
+### DEPRECATED: Two-Stage CFA Approach
+
+**Warning:** The following two-stage approach causes 15-50% attenuation bias on LV effects and should NOT be used for publication-quality results.
 
 ```python
 def estimate_lv(items):
@@ -753,8 +796,10 @@ def estimate_lv(items):
     # 4. Standardize to N(0,1)
     score = (score - mean(score)) / std(score)
 
-    return score
+    return score  # PROBLEM: Treated as error-free in Stage 2!
 ```
+
+This approach is kept in `hcm_split_latents.py` and `hcm_extended.py` for reference only.
 
 ### LV Correlations
 

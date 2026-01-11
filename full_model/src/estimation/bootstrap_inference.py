@@ -17,7 +17,7 @@ Usage:
     results = boot.nonparametric_bootstrap(n_bootstrap=500)
     boot.print_summary()
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np
@@ -36,10 +36,11 @@ class BootstrapResults:
     bootstrap_estimates: np.ndarray  # Shape: (n_bootstrap, n_params)
     bootstrap_se: Dict[str, float]
     ci_percentile: Dict[str, Tuple[float, float]]
-    ci_bca: Dict[str, Tuple[float, float]]  # Bias-corrected accelerated
+    ci_bc: Dict[str, Tuple[float, float]]  # Bias-corrected (BC) - DEFAULT for panel data
     n_bootstrap: int
     n_failed: int
     method: str
+    ci_method: str = 'BC'  # 'BC' (bias-corrected) or 'BCa' (accelerated)
 
 
 class BootstrapEstimator:
@@ -199,7 +200,15 @@ class BootstrapEstimator:
         # Compute bootstrap statistics
         bootstrap_se = {}
         ci_percentile = {}
-        ci_bca = {}
+        ci_bc = {}
+
+        # For panel data, use BC (bias-corrected) instead of BCa
+        # BCa requires jackknife acceleration which is invalid for clustered data
+        use_bca = not cluster  # Only use BCa for non-clustered data
+        ci_method = 'BCa' if use_bca else 'BC'
+
+        if cluster and verbose:
+            print(f"  Using BC (bias-corrected) intervals (BCa invalid for panel data)")
 
         for i, param in enumerate(param_names):
             param_boots = boot_array[:, i]
@@ -214,14 +223,15 @@ class BootstrapEstimator:
                     np.percentile(valid, 97.5)
                 )
 
-                # BCa CI (bias-corrected and accelerated)
-                ci_bca[param] = self._compute_bca_ci(
-                    original[param], valid, self.df, param
+                # BC or BCa CI depending on data structure
+                ci_bc[param] = self._compute_bca_ci(
+                    original[param], valid, self.df, param,
+                    use_jackknife=use_bca  # Only compute acceleration for non-panel
                 )
             else:
                 bootstrap_se[param] = np.nan
                 ci_percentile[param] = (np.nan, np.nan)
-                ci_bca[param] = (np.nan, np.nan)
+                ci_bc[param] = (np.nan, np.nan)
 
         results = BootstrapResults(
             parameter_names=param_names,
@@ -229,23 +239,121 @@ class BootstrapEstimator:
             bootstrap_estimates=boot_array,
             bootstrap_se=bootstrap_se,
             ci_percentile=ci_percentile,
-            ci_bca=ci_bca,
+            ci_bc=ci_bc,
             n_bootstrap=n_bootstrap,
             n_failed=n_failed,
-            method='nonparametric_cluster' if cluster else 'nonparametric_obs'
+            method='nonparametric_cluster' if cluster else 'nonparametric_obs',
+            ci_method=ci_method
         )
 
         self.bootstrap_results = results
         return results
+
+    def _compute_jackknife_acceleration(self,
+                                          param_name: str,
+                                          use_clusters: bool = True) -> float:
+        """
+        Compute BCa acceleration factor using jackknife influence values.
+
+        The acceleration factor captures the rate of change of the standard
+        error with respect to the true parameter value. Formula:
+            a = sum(L^3) / (6 * (sum(L^2))^1.5)
+        where L are the jackknife influence values.
+
+        For panel data, we use cluster-level jackknife (leave-one-individual-out).
+
+        IMPORTANT LIMITATION FOR PANEL DATA:
+        The BCa acceleration formula assumes the jackknife estimates are
+        approximately independent. With panel data, even cluster-level
+        jackknife produces estimates that share most of their data, leading
+        to UNDERESTIMATED acceleration factors. This can result in:
+        - BCa intervals that are too narrow
+        - Coverage probabilities below nominal levels
+
+        For rigorous inference with panel data, consider:
+        - Using simple percentile CIs (use_jackknife=False in _compute_bca_ci)
+        - Subsampling bootstrap instead of full bootstrap
+        - Analytical corrections for panel structure
+
+        Args:
+            param_name: Parameter name to compute acceleration for
+            use_clusters: If True, jackknife at cluster level (recommended for panel)
+
+        Returns:
+            Acceleration factor 'a'
+
+        References:
+            - DiCiccio & Efron (1996). Bootstrap Confidence Intervals.
+            - Efron (1987). Better bootstrap confidence intervals.
+            - Field & Welsh (2007). Bootstrapping clustered data.
+        """
+        if use_clusters and self.id_col in self.df.columns:
+            unique_ids = self.df[self.id_col].unique()
+            n = len(unique_ids)
+
+            # Leave-one-cluster-out jackknife estimates
+            jack_estimates = []
+            for leave_out_id in unique_ids:
+                df_jack = self.df[self.df[self.id_col] != leave_out_id]
+                estimates = self._estimate_model(df_jack)
+                if estimates is not None and param_name in estimates:
+                    jack_estimates.append(estimates[param_name])
+
+            if len(jack_estimates) < 3:
+                return 0.0  # Not enough successful jackknife estimates
+
+            jack_estimates = np.array(jack_estimates)
+        else:
+            # Observation-level jackknife (more expensive, less common)
+            n = len(self.df)
+            jack_estimates = []
+            for i in range(min(n, 100)):  # Limit to 100 for computational reasons
+                idx = list(range(n))
+                idx.pop(i)
+                df_jack = self.df.iloc[idx]
+                estimates = self._estimate_model(df_jack)
+                if estimates is not None and param_name in estimates:
+                    jack_estimates.append(estimates[param_name])
+
+            if len(jack_estimates) < 3:
+                return 0.0
+
+            jack_estimates = np.array(jack_estimates)
+
+        # Compute influence values: L_i = (n-1) * (theta_bar - theta_{-i})
+        # This is equivalent to the empirical influence function
+        theta_bar = np.mean(jack_estimates)
+        L = (len(jack_estimates) - 1) * (theta_bar - jack_estimates)
+
+        # Acceleration factor: a = sum(L^3) / (6 * sum(L^2)^1.5)
+        sum_L2 = np.sum(L ** 2)
+        sum_L3 = np.sum(L ** 3)
+
+        if sum_L2 == 0:
+            return 0.0
+
+        a = sum_L3 / (6.0 * (sum_L2 ** 1.5))
+
+        return a
 
     def _compute_bca_ci(self,
                         theta_hat: float,
                         theta_boot: np.ndarray,
                         df: pd.DataFrame,
                         param_name: str,
-                        alpha: float = 0.05) -> Tuple[float, float]:
+                        alpha: float = 0.05,
+                        use_jackknife: bool = False) -> Tuple[float, float]:
         """
         Compute BCa (bias-corrected and accelerated) confidence interval.
+
+        BCa intervals correct for bias and skewness in the bootstrap distribution,
+        providing more accurate coverage than simple percentile intervals.
+
+        IMPORTANT: For panel data, set use_jackknife=False (the default) because
+        the jackknife acceleration formula assumes independent observations.
+        With clustered data, the acceleration factor will be underestimated,
+        leading to CIs that are too narrow. When use_jackknife=False, this
+        computes bias-corrected percentile (BC) intervals instead of BCa.
 
         Args:
             theta_hat: Original point estimate
@@ -253,26 +361,49 @@ class BootstrapEstimator:
             df: Original data
             param_name: Parameter name
             alpha: Significance level
+            use_jackknife: If True, compute acceleration from jackknife.
+                          Default False for panel data robustness.
+                          Set True only for cross-sectional data.
 
         Returns:
             Tuple of (lower, upper) CI bounds
+
+        References:
+            - DiCiccio & Efron (1996). Bootstrap Confidence Intervals.
+            - Efron & Tibshirani (1993). An Introduction to the Bootstrap.
+            - Field & Welsh (2007). Bootstrapping clustered data.
         """
         n_boot = len(theta_boot)
 
-        # Bias correction factor
-        z0 = stats.norm.ppf(np.mean(theta_boot < theta_hat))
+        # Bias correction factor: z0 = Φ^{-1}(proportion of boots < original)
+        prop_less = np.mean(theta_boot < theta_hat)
+        # Handle edge cases
+        prop_less = np.clip(prop_less, 0.001, 0.999)
+        z0 = stats.norm.ppf(prop_less)
 
-        # Acceleration factor (jackknife)
-        # Simplified: use 0 if jackknife is too expensive
-        a = 0.0  # Could compute from jackknife influence values
+        # Acceleration factor from jackknife influence values
+        if use_jackknife:
+            a = self._compute_jackknife_acceleration(param_name, use_clusters=True)
+        else:
+            a = 0.0  # Reduces to bias-corrected percentile (BC) interval
 
-        # Adjusted percentiles
+        # Adjusted percentiles using BCa formula
         z_alpha_lower = stats.norm.ppf(alpha / 2)
         z_alpha_upper = stats.norm.ppf(1 - alpha / 2)
 
-        # BCa adjustment
-        alpha_lower = stats.norm.cdf(z0 + (z0 + z_alpha_lower) / (1 - a * (z0 + z_alpha_lower)))
-        alpha_upper = stats.norm.cdf(z0 + (z0 + z_alpha_upper) / (1 - a * (z0 + z_alpha_upper)))
+        # BCa adjustment formula
+        # α_adj = Φ(z0 + (z0 + z_α) / (1 - a*(z0 + z_α)))
+        denom_lower = 1 - a * (z0 + z_alpha_lower)
+        denom_upper = 1 - a * (z0 + z_alpha_upper)
+
+        # Prevent division by zero
+        if abs(denom_lower) < 1e-10:
+            denom_lower = 1e-10 * np.sign(denom_lower) if denom_lower != 0 else 1e-10
+        if abs(denom_upper) < 1e-10:
+            denom_upper = 1e-10 * np.sign(denom_upper) if denom_upper != 0 else 1e-10
+
+        alpha_lower = stats.norm.cdf(z0 + (z0 + z_alpha_lower) / denom_lower)
+        alpha_upper = stats.norm.cdf(z0 + (z0 + z_alpha_upper) / denom_upper)
 
         # Ensure valid percentiles
         alpha_lower = np.clip(alpha_lower, 0.001, 0.999)
@@ -340,11 +471,12 @@ class BootstrapEstimator:
 
         print("-" * 70)
 
-        # BCa intervals
-        print(f"\n{'Parameter':<20} {'95% CI (BCa)':>25}")
+        # BC/BCa intervals (depending on what was computed)
+        ci_label = results.ci_method if hasattr(results, 'ci_method') else 'BC'
+        print(f"\n{'Parameter':<20} {f'95% CI ({ci_label})':>25}")
         print("-" * 50)
         for param in results.parameter_names:
-            ci = results.ci_bca.get(param, (np.nan, np.nan))
+            ci = results.ci_bc.get(param, (np.nan, np.nan))
             ci_str = f"[{ci[0]:>8.4f}, {ci[1]:>8.4f}]"
             print(f"{param:<20} {ci_str:>25}")
 
@@ -356,6 +488,7 @@ class BootstrapEstimator:
         results = self.bootstrap_results
         original = self._get_original_estimates()
 
+        ci_method = results.ci_method if hasattr(results, 'ci_method') else 'BC'
         rows = []
         for param in results.parameter_names:
             rows.append({
@@ -364,8 +497,8 @@ class BootstrapEstimator:
                 'bootstrap_se': results.bootstrap_se.get(param, np.nan),
                 'ci_lower_pct': results.ci_percentile.get(param, (np.nan, np.nan))[0],
                 'ci_upper_pct': results.ci_percentile.get(param, (np.nan, np.nan))[1],
-                'ci_lower_bca': results.ci_bca.get(param, (np.nan, np.nan))[0],
-                'ci_upper_bca': results.ci_bca.get(param, (np.nan, np.nan))[1],
+                f'ci_lower_{ci_method.lower()}': results.ci_bc.get(param, (np.nan, np.nan))[0],
+                f'ci_upper_{ci_method.lower()}': results.ci_bc.get(param, (np.nan, np.nan))[1],
             })
 
         return pd.DataFrame(rows)

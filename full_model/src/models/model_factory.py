@@ -19,7 +19,7 @@ Usage:
     # Run multiple models
     all_results = ModelFactory.run_comparison(['mnl_basic', 'mnl_demo'], database)
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import warnings

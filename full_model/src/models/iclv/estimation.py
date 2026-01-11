@@ -14,7 +14,7 @@ Improvements over basic version:
 6. Analytical gradients for key components
 7. Two-stage vs ICLV comparison tools
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import numpy as np

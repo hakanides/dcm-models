@@ -30,7 +30,7 @@ References:
 - Vij & Walker (2016). How, when and why integrated choice and latent variable
   models are latently useful
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 from .core import ICLVModel, ICLVResult

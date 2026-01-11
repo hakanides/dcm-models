@@ -18,7 +18,7 @@ Model Specifications:
 Usage:
     python src/models/mnl_extended.py --data data/simulated/fresh_simulation.csv
 
-Author: DCM Research Team
+Authors: Hakan Mülayim, Giray Girengir, Ataol Azeritürk
 """
 
 import argparse
